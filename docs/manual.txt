@@ -1,0 +1,47 @@
+# Intro
+
+Whisker Scope shows what your sound is doing: its waveform, its frequencies, how wide it is, and how close it is to a sound you want to match. It never changes the sound. The audio goes through untouched, and everything you see is measured from a copy.
+
+It is free and open source, made by Studio 87. It collects nothing and works fully offline.
+
+# Quick start
+
+- Put Whisker Scope on the track or the master you want to look at. Play something.
+- Pick a page at the top: Scope, Spectrum, Stereo field or Shapes.
+- Hover the Spectrum to read the frequency, the note and the level under the mouse.
+- Display gain only changes what you see and measure, not what you hear.
+- Hover any control for one second to read what it does. Settings can turn those bubbles off.
+
+# Scope
+
+The waveform of the sound. Channels picks L / R, left, right, mono or mid / side. Sync keeps the picture steady: Free shows the newest samples, Trigger starts each sweep at a rising zero crossing, Pitch locks to the detected pitch and shows two periods, Beat shows one beat of the host tempo. Visible time sets how many milliseconds you see. Freeze holds the picture.
+
+# Spectrum
+
+Which frequencies are in the sound. FFT size trades sharpness (bigger, good for bass) against speed (smaller). Speed sets how fast the picture falls. Range sets how many dB are shown. Smoothing averages neighbouring frequencies. Slope tilts the picture by dB per octave around 1 kHz (3 dB makes pink noise look flat). Linear switches to a linear frequency scale, Fill colours under the line, Peak hold keeps the highest value of every frequency until Peak reset. The highest peak is labelled with its level, frequency and note.
+
+# Stereo field
+
+The goniometer shows where the sound sits between left and right. Straight up is mono, sideways is wide, a diagonal means one side only. The correlation meter goes from -1 (antiphase, cancels in mono) through 0 (stereo) to +1 (mono). Width is the share of side energy. Mono loss is how much quieter the sound gets when left and right are added. The verdict (Mono safe, Check mono, Phase problem) follows simple rules of thumb: it is a hint, not a standard.
+
+# Shapes
+
+Shapes compares the average spectrum of a reference (a song, a lead you love) with your own sound, on 60 bands of 1/6 octave from 20 Hz, Mid and Side kept apart.
+- Press Capture reference, play the reference, press the button again. Only moments with signal are averaged.
+- Press Capture mine and do the same with your sound. Without it, the live spectrum is compared.
+- The orange curve is the EQ that moves your sound toward the reference. Both shapes are first levelled to their own average, so loudness does not matter, only the balance of frequencies.
+- Strength scales the curve. Max move limits the largest boost or cut.
+- Save shape, Load shape, Copy shape text and Paste shape text keep and share shapes. Bad text is refused.
+- The three starting points are made by us and are not measured from any song.
+- Copy EQ points copies the suggestion as a list of frequencies and gains for your own EQ.
+
+# Levels
+
+Bars show RMS for left, right, mid and side. The white line is the held peak. Peak reset clears it. Momentary loudness is K weighted over 400 ms. It is a monitor, not a certified loudness meter.
+
+# Recommendations
+
+- Match shapes with the same kind of material: a lead against a lead, a full mix against a full mix.
+- Treat the EQ curve as a hint. Move a little, then listen.
+- Use Mono safe as a quick check before you export, and listen in mono once.
+- Capture for a few seconds of the busiest part of the song, not the intro.
