@@ -1,557 +1,716 @@
 #include "PluginEditor.h"
-#include "catui/Logo.h"
+#include "Views.h"
+#include "Controls.h"
 #include "catui/RenderGate.h"
-#include "catui/SodaPop.h"
 
-namespace sp = catui::SodaPop;
+#ifndef WS_VERSION
+ #define WS_VERSION "0.2.0"
+#endif
+
 using APVTS = juce::AudioProcessorValueTreeState;
-using namespace ws;
 
-namespace
+namespace wsui
 {
-juce::Font F (float h, bool bold = false) { juce::Font f (juce::FontOptions { h }); return bold ? f.boldened() : f; }
-const juce::Colour kPanel (0xff17181d), kPanel2 (0xff1e2027), kLine (0xff2c2e38), kDisp (0xff06080a), kInk (0xffe8eaf0), kDim (0xff8f93a3), kGrid (0xff1a2422), kAxis (0xff8f8bd6);
-const juce::Colour kL = sp::mint(), kR = sp::hotPink(), kM = sp::lilac(), kS = sp::gold();
-
-void paintWood (juce::Graphics& g, juce::Rectangle<int> r, bool left)
-{
-    const juce::Colour c[4] = { juce::Colour (0xff5B3A22), juce::Colour (0xff6E4729), juce::Colour (0xff4E3120), juce::Colour (0xff77502F) };
-    const int w[4] = { 3, 4, 2, 5 }; int x = r.getX(), i = left ? 0 : 1;
-    while (x < r.getRight()) { g.setColour (c[i & 3]); g.fillRect (x, r.getY(), juce::jmin (w[i & 3], r.getRight() - x), r.getHeight()); x += w[i & 3]; ++i; }
-    const float x0 = left ? (float) r.getRight() - 8.0f : (float) r.getX(), x1 = left ? (float) r.getRight() : (float) r.getX() + 8.0f;
-    g.setGradientFill (juce::ColourGradient (juce::Colours::black.withAlpha (left ? 0.0f : 0.6f), x0, 0.0f, juce::Colours::black.withAlpha (left ? 0.6f : 0.0f), x1, 0.0f, false));
-    g.fillRect (juce::Rectangle<float> (juce::jmin (x0, x1), (float) r.getY(), 8.0f, (float) r.getHeight()));
-}
-
-struct Look : juce::LookAndFeel_V4
-{
-    Look()
-    {
-        setColour (juce::ComboBox::backgroundColourId, kPanel2); setColour (juce::ComboBox::textColourId, kInk); setColour (juce::ComboBox::outlineColourId, kLine);
-        setColour (juce::PopupMenu::backgroundColourId, kPanel2); setColour (juce::PopupMenu::textColourId, kInk); setColour (juce::PopupMenu::highlightedBackgroundColourId, sp::grape());
-        setColour (juce::Slider::textBoxTextColourId, sp::gold()); setColour (juce::Slider::textBoxOutlineColourId, juce::Colours::transparentBlack);
-        setColour (juce::TextButton::buttonColourId, kPanel2); setColour (juce::TextButton::buttonOnColourId, juce::Colour (0xff241238)); setColour (juce::TextButton::textColourOffId, kInk); setColour (juce::TextButton::textColourOnId, sp::mistLilac());
-        setColour (juce::TooltipWindow::backgroundColourId, juce::Colour (0xff23252d)); setColour (juce::TooltipWindow::textColourId, kInk); setColour (juce::TooltipWindow::outlineColourId, sp::grape());
-    }
-    juce::Font getTextButtonFont (juce::TextButton&, int) override { return F (14.0f, true); }
-    juce::Font getComboBoxFont (juce::ComboBox&) override { return F (14.0f); }
-    juce::Font getPopupMenuFont() override { return F (15.0f); }
-    void drawButtonBackground (juce::Graphics& g, juce::Button& b, const juce::Colour&, bool hover, bool down) override
-    {
-        auto r = b.getLocalBounds().toFloat().reduced (0.5f); const bool on = b.getToggleState();
-        g.setColour (on ? juce::Colour (0xff241238) : (hover || down ? juce::Colour (0xff272a33) : kPanel2)); g.fillRoundedRectangle (r, 4.0f);
-        g.setColour (on ? sp::lilac() : kLine); g.drawRoundedRectangle (r, 4.0f, 1.0f);
-    }
-    void drawRotarySlider (juce::Graphics& g, int x, int y, int w, int h, float pos, float a0, float a1, juce::Slider&) override
-    {
-        const float d = (float) juce::jmin (w, h) - 6.0f, cx = x + w * 0.5f, cy = y + h * 0.5f, r = d * 0.5f;
-        g.setColour (juce::Colour (0xff23252c)); g.fillEllipse (cx - r + 4, cy - r + 4, d - 8, d - 8);
-        juce::Path t; t.addCentredArc (cx, cy, r, r, 0, a0, a1, true); g.setColour (juce::Colour (0xff33353d)); g.strokePath (t, juce::PathStrokeType (3.0f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
-        const float a = a0 + pos * (a1 - a0); juce::Path v; v.addCentredArc (cx, cy, r, r, 0, a0, a, true);
-        g.setColour (sp::lilac()); g.strokePath (v, juce::PathStrokeType (3.0f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
-        juce::Path tick; tick.addLineSegment ({ 0, -r + 7, 0, -r * 0.35f }, 1.0f); g.setColour (kInk); g.strokePath (tick, juce::PathStrokeType (2.0f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded), juce::AffineTransform::rotation (a).translated (cx, cy));
-    }
-};
-
-const int kFfts[5] = { 2048, 4096, 8192, 16384, 32768 };
-float freqToX (double f, bool lin, float w) { return lin ? (float) (f / 20000.0 * w) : (float) (std::log (f / 20.0) / std::log (1000.0) * w); }
-double xToFreq (float x, bool lin, float w) { return lin ? (double) x / w * 20000.0 : 20.0 * std::pow (1000.0, (double) x / w); }
-}
-
 //==============================================================================
-class WhiskerScopeEditor::Content : public juce::Component
+// Meters column: level bars, readouts, correlation. Child controls (Metering, RMS length, Peak reset) are added by Content.
+class MeterPanel : public juce::Component
 {
 public:
-    explicit Content (WhiskerScopeProcessor& p) : proc (p), gate (*this)
-    {
-        setOpaque (true); setWantsKeyboardFocus (false);
-        for (int i = 0; i < 4; ++i)
-        {
-            auto* b = tabs.add (new juce::TextButton (names[i])); addAndMakeVisible (b); b->setClickingTogglesState (false);
-            b->onClick = [this, i] { setPage (i); };
-        }
-        tabs[0]->setTooltip ("Scope: the waveform of the left and right channel, or mono, or mid and side. Sync keeps a steady picture.");
-        tabs[1]->setTooltip ("Spectrum: what frequencies are in the sound, with peak labels (level, frequency and note).");
-        tabs[2]->setTooltip ("Stereo field: goniometer, correlation and mono compatibility.");
-        tabs[3]->setTooltip ("Shapes: capture a reference spectrum and your own, and see the EQ that moves yours toward it.");
-        auto btn = [&] (juce::TextButton& b, const char* t, const char* tip) { b.setButtonText (t); b.setTooltip (tip); addChildComponent (b); };
-        btn (settings, "Settings", "Info bubbles and the plugin version."); btn (about, "About & Support", "About Studio 87 and ways to support the project.");
-        settings.setVisible (true); about.setVisible (true);
-        settings.onClick = [this] { showSettings(); }; about.onClick = [this] { showAbout(); };
-        btn (peakReset, "Peak reset", "Clears the held peaks and the clip light."); peakReset.setVisible (true);
-        peakReset.onClick = [this] { proc.resetPeaks(); for (auto& a : an) a.resetHold(); };
-
-        // sliders
-        addSlider (gainS, "Display gain", "gain", "Boosts or cuts what you SEE and measure. The sound that goes to your speakers is never changed.", true);
-        addCombo (scopeChanC, "Channels", "scopeChan", "Which channels the scope shows.", 0); addCombo (syncC, "Sync", "sync", "Free: always the newest samples. Trigger: starts each sweep at a rising zero crossing. Pitch: locks to the detected period. Beat: one beat of the host tempo.", 0);
-        addSlider (timeS, "Visible time", "scopeTime", "How much time the scope shows, in milliseconds.", false, 0);
-        addToggle (freezeT, "Freeze", "freeze", "Holds the picture so you can look at it.", { 0, 1, 3 });
-        addCombo (specChanC, "Channels", "specChan", "Mono, left, right, side, or two traces at once.", 1); addCombo (fftC, "FFT size", "fft", "Bigger is sharper in frequency (good for bass), smaller is quicker.", 1);
-        addCombo (speedC, "Speed", "speed", "How fast the picture falls back down.", 1); addCombo (rangeC, "Range", "range", "How many dB are shown below 0.", 1); addCombo (smoothC, "Smoothing", "smooth", "Averages neighbouring frequencies for a calmer picture.", 1);
-        addSlider (tiltS, "Slope", "tilt", "Tilts the picture by dB per octave around 1 kHz. 3 dB makes pink noise look flat.", false, 1);
-        addToggle (linearT, "Linear", "linear", "Linear frequency scale instead of logarithmic.", { 1 }); addToggle (fillT, "Fill", "fill", "Fill under the line.", { 1 }); addToggle (holdT, "Peak hold", "hold", "Keeps the highest value of every frequency until Peak reset.", { 1 });
-        addToggle (freezeT2, "Freeze", "freeze", "Holds the picture so you can look at it.", { 1 });
-        addSlider (zoomS, "Zoom", "zoom", "Magnifies the goniometer. Quiet material becomes easy to read.", false, 2);
-        addSlider (strengthS, "Strength", "strength", "How much of the difference the EQ curve shows. 100 % is the full difference.", false, 3); addSlider (maxS, "Max move", "maxMove", "Largest boost or cut the EQ curve will suggest, in dB.", false, 3);
-
-        auto sb = [&] (juce::TextButton& b, const char* t, const char* tip, std::function<void()> f) { b.setButtonText (t); b.setTooltip (tip); b.onClick = std::move (f); addChildComponent (b); };
-        sb (capRef, "Capture reference", "Press, play the song or sound you want to sound like, press again. The average spectrum is kept (Mid and Side apart). Only moments with signal count.", [this] { toggleCapture (1); });
-        sb (capMine, "Capture mine", "Same for your own sound. Without it the live spectrum is compared.", [this] { toggleCapture (2); });
-        sb (clearMine, "Clear mine", "Forgets your captured shape and goes back to the live comparison.", [this] { proc.hasMine = false; if (capturing == 2) capturing = 0; });
-        sb (saveShape, "Save shape", "Saves the reference shape to your shape library on this computer.", [this] { saveShapeDialog(); });
-        sb (loadShape, "Load shape", "Loads a saved shape or one of our starting points as the reference.", [this] { loadShapeMenu(); });
-        sb (copyShape, "Copy shape text", "Copies the reference shape as text so you can share it.", [this] { if (proc.hasRef) juce::SystemClipboard::copyTextToClipboard (juce::String (shapeToText (proc.refShape))); });
-        sb (pasteShape, "Paste shape text", "Reads a shape from the clipboard. Bad text is refused.", [this] { pasteShapeText(); });
-        sb (copyEq, "Copy EQ points", "Copies the EQ suggestion as a list of frequencies and gains.", [this] { juce::SystemClipboard::copyTextToClipboard (eqText()); });
-        sb (sideT, "Show Side", "Switches the Shapes display between Mid and Side.", [this] { showSide = ! showSide; sideT.setToggleState (showSide, juce::dontSendNotification); });
-        sideT.setClickingTogglesState (false);
-
-        for (auto& a : an) a.prepare (48000.0, 8192);
-        setPage (proc.page);
-        gate.onFrame = [this] { update(); repaint(); }; gate.start (30);
-    }
-    ~Content() override { gate.stop(); }
-
-    void setPage (int p)
-    {
-        page = proc.page = juce::jlimit (0, 3, p);
-        for (int i = 0; i < 4; ++i) tabs[i]->setToggleState (i == page, juce::dontSendNotification);
-        for (auto& c : pageCtl) c.comp->setVisible (c.page == page || c.page < 0);
-        capRef.setVisible (page == 3); capMine.setVisible (page == 3); clearMine.setVisible (page == 3); saveShape.setVisible (page == 3); loadShape.setVisible (page == 3);
-        copyShape.setVisible (page == 3); pasteShape.setVisible (page == 3); copyEq.setVisible (page == 3); sideT.setVisible (page == 3);
-        resized(); repaint();
-    }
-
-    //==========================================================================
-    void resized() override
-    {
-        auto b = getLocalBounds(); (void) b;
-        int x = 244; for (int i = 0; i < 4; ++i) { tabs[i]->setBounds (x, 16, 118, 34); x += 124; }
-        about.setBounds (1010, 16, 140, 34); settings.setBounds (912, 16, 92, 34);
-        dispR = { 50, 70, 910, 480 }; metR = { 972, 70, 178, 480 };
-        peakReset.setBounds (metR.getX() + 8, metR.getBottom() - 38, metR.getWidth() - 16, 30);
-        layoutControls();
-    }
-
+    explicit MeterPanel (Env& e) : env (e) { setOpaque (false); }
     void paint (juce::Graphics& g) override
     {
-        g.fillAll (juce::Colour (0xff0b0c0f));
-        g.setColour (kPanel); g.fillRect (34, 0, W - 68, H);
-        paintWood (g, { 0, 0, 34, H }, true); paintWood (g, { W - 34, 0, 34, H }, false);
-        catui::drawCatHead (g, { 50.0f, 10.0f, 44.0f, 44.0f }, sp::lilac());
-        g.setColour (kInk); g.setFont (F (28.0f, true)); g.drawText ("WHISKER SCOPE", 102, 8, 260, 32, juce::Justification::centredLeft);
-        g.setColour (sp::gold()); g.setFont (F (12.0f)); g.drawText ("STUDIO 87", 104, 36, 200, 16, juce::Justification::centredLeft);
-        g.setColour (kLine); g.fillRect (50, 60, 1100, 1);
-        paintDisplay (g); paintMeters (g);
-        g.setColour (kPanel2); g.fillRoundedRectangle (50.0f, 560.0f, 1100.0f, 178.0f, 4.0f); g.setColour (kLine); g.drawRoundedRectangle (50.0f, 560.0f, 1100.0f, 178.0f, 4.0f, 1.0f);
-        paintControlLabels (g);
-        g.setColour (kDim); g.setFont (F (12.0f)); g.drawText ("Studio 87 · Whisker Scope v" JucePlugin_VersionString, 50, 748, 500, 20, juce::Justification::centredLeft);
-        g.drawText ("Free and open source. Collects nothing. The sound is never changed.", 600, 748, 550, 20, juce::Justification::centredRight);
+        auto r = getLocalBounds().toFloat().reduced (0.5f); g.setColour (col::panel2); g.fillRoundedRectangle (r, 4.0f); g.setColour (col::line); g.drawRoundedRectangle (r, 4.0f, 1.0f);
+        auto& P = env.p; const auto& S = *env.pal; const bool two = P.page == 3; const juce::String mm (P.choiceRaw ("mmode")); const bool lufs = mm == "lufs";
+        txt (g, two ? "IN / OUT" : "LEVEL", 11, 21, col::dim, juce::Justification::left, label (12.0f, 500, 0.2f));
+        txt (g, "CLIP", 210, 21, col::dim, juce::Justification::right, label (12.0f, 500, 0.2f));
+        const bool clip = env.anyClip(); const juce::Colour ledC = clip ? juce::Colour (0xffff2d95) : juce::Colour (0xff3a1020);
+        if (clip) { g.setColour (ledC.withAlpha (0.35f)); g.fillEllipse (211, 11, 16, 16); } g.setColour (ledC); g.fillEllipse (214, 14, 10, 10);
+        paintLevels (g, S, lufs, two);
+        const auto& o = env.out; auto fd = [] (float v) { return v <= -119 ? juce::String ("-inf") : juce::String (v, 1); };
+        std::vector<std::pair<juce::String, juce::String>> ro;
+        if (lufs) ro = { { "Moment.", fd (P.lufsOut.momentary()) }, { "Short", fd (P.lufsOut.shortTerm()) }, { "Integr.", fd (P.lufsOut.integrated()) }, { "Max M", fd (P.lufsOut.maxMomentary()) } };
+        else
+        {
+            const float crest = std::max (o.pk[0], o.pk[1]) - std::max (o.rms[0], o.rms[1]);
+            ro = { { "Peak L", fd (o.pk[0]) }, { "Peak R", fd (o.pk[1]) }, { "RMS L", fd (o.rms[0]) }, { "RMS R", fd (o.rms[1]) }, { "Crest dB", env.silent ? juce::String ("-") : juce::String (crest, 1) }, { "Held", fd (std::max (o.hold[0], o.hold[1])) } };
+        }
+        drawRo (g, ro, 349);
+        if (lufs) mtxt (g, "LUFS = loudness, K-weighted", 11, 349 + 17 * 2 + 4, col::dim, juce::Justification::left, 11);
+        txt (g, "CORRELATION", 11, 549, col::dim, juce::Justification::left, label (12.0f, 500, 0.2f));
+        mtxt (g, env.silent ? juce::String ("-") : juce::String (env.corr, 2), 224, 549, S.acc, juce::Justification::right, 11);
+        paintCorr (g, S);
+        std::vector<std::pair<juce::String, juce::String>> r2 = { { "Width", env.silent ? juce::String ("-") : juce::String ((int) std::lround (env.width)) + " %" }, { "Bal.", env.silent ? juce::String ("-") : juce::String (env.bal > 0 ? "L " : "R ") + juce::String (std::abs (env.bal), 1) },
+                                                                  { "Mono dB", env.silent ? juce::String ("-") : juce::String (env.monoLoss, 1) }, { "Corr.", env.silent ? juce::String ("-") : juce::String (env.corr, 2) } };
+        drawRo (g, r2, 619);
+        const int v = env.verdict; const juce::String msg = v < 0 ? "No signal" : v == 2 ? "Phase problem: weak in mono" : v == 1 ? "Check mono: some loss" : "Mono safe"; const juce::Colour vc = v < 0 ? col::dim : v == 2 ? S.r : v == 1 ? S.acc : S.l;
+        txt (g, msg.toUpperCase(), (float) getWidth() * 0.5f, 660, vc, juce::Justification::centred, label (14.0f, 500, 0.08f));
     }
-
-    void mouseMove (const juce::MouseEvent& e) override { hover = e.position; hasHover = dispR.contains (e.getPosition()); }
-    void mouseExit (const juce::MouseEvent&) override { hasHover = false; }
-
 private:
-    static constexpr int W = WhiskerScopeEditor::W, H = WhiskerScopeEditor::H;
-    const char* names[4] = { "Scope", "Spectrum", "Stereo field", "Shapes" };
-
-    struct PC { juce::Component* comp; int page; };
-    juce::Array<PC> pageCtl;
-    std::vector<std::unique_ptr<APVTS::SliderAttachment>> sAtt; std::vector<std::unique_ptr<APVTS::ComboBoxAttachment>> cAtt; std::vector<std::unique_ptr<APVTS::ButtonAttachment>> bAtt;
-    juce::Slider gainS, timeS, tiltS, zoomS, strengthS, maxS; juce::ComboBox scopeChanC, syncC, specChanC, fftC, speedC, rangeC, smoothC;
-    juce::TextButton freezeT, freezeT2, linearT, fillT, holdT, settings, about, peakReset, capRef, capMine, clearMine, saveShape, loadShape, copyShape, pasteShape, copyEq, sideT;
-    juce::OwnedArray<juce::TextButton> tabs;
-    struct Cap { juce::Component* comp; juce::String text; int page; };
-    std::vector<Cap> caps;
-
-    void addCaption (juce::Component& c, const juce::String& t, int page) { caps.push_back ({ &c, t, page }); }
-    void addSlider (juce::Slider& s, const char* label, const char* id, const char* tip, bool gainKnob, int page = -1)
+    Env& env;
+    void drawRo (juce::Graphics& g, const std::vector<std::pair<juce::String, juce::String>>& v, float y0)
     {
-        s.setSliderStyle (juce::Slider::RotaryHorizontalVerticalDrag); s.setRotaryParameters (juce::degreesToRadians (225.0f), juce::degreesToRadians (495.0f), true);
-        s.setTextBoxStyle (juce::Slider::TextBoxBelow, false, 78, 18); s.setTooltip (tip); s.setDoubleClickReturnValue (true, proc.apvts.getParameter (id)->convertFrom0to1 (proc.apvts.getParameter (id)->getDefaultValue()));
-        s.setNumDecimalPlacesToDisplay (id == std::string ("scopeTime") ? 0 : 1);
-        addAndMakeVisible (s); sAtt.push_back (std::make_unique<APVTS::SliderAttachment> (proc.apvts, id, s)); addCaption (s, label, gainKnob ? -1 : page); pageCtl.add ({ &s, gainKnob ? -1 : page });
-        if (std::string (id) == "gain") s.setTextValueSuffix (" dB"); else if (std::string (id) == "scopeTime") s.setTextValueSuffix (" ms"); else if (std::string (id) == "tilt") s.setTextValueSuffix (" dB/oct");
-        else if (std::string (id) == "strength") { s.setTextValueSuffix (" %"); s.textFromValueFunction = [] (double v) { return juce::String (juce::roundToInt (v * 100.0)); }; s.valueFromTextFunction = [] (const juce::String& t) { return t.getDoubleValue() / 100.0; }; s.updateText(); }
-        else if (std::string (id) == "maxMove") s.setTextValueSuffix (" dB"); else if (std::string (id) == "zoom") s.setTextValueSuffix (" x");
-    }
-    void addCombo (juce::ComboBox& c, const char* label, const char* id, const char* tip, int page)
-    {
-        const auto* p = dynamic_cast<juce::AudioParameterChoice*> (proc.apvts.getParameter (id)); c.addItemList (p->choices, 1); c.setTooltip (tip); addAndMakeVisible (c);
-        cAtt.push_back (std::make_unique<APVTS::ComboBoxAttachment> (proc.apvts, id, c)); addCaption (c, label, page); pageCtl.add ({ &c, page });
-    }
-    void addToggle (juce::TextButton& b, const char* label, const char* id, const char* tip, juce::Array<int> pages)
-    {
-        b.setButtonText (label); b.setTooltip (tip); b.setClickingTogglesState (true); addAndMakeVisible (b); bAtt.push_back (std::make_unique<APVTS::ButtonAttachment> (proc.apvts, id, b)); pageCtl.add ({ &b, pages[0] });
-    }
-    void layoutControls()
-    {
-        const int y0 = 596;
-        auto knob = [&] (juce::Component& c, int x) { c.setBounds (x, y0 - 8, 96, 100); };
-        // gain sits in the controls strip on the right for every page
-        knob (gainS, 1040);
-        scopeChanC.setBounds (70, y0 + 8, 170, 28); syncC.setBounds (260, y0 + 8, 190, 28); knob (timeS, 480); freezeT.setBounds (620, y0 + 8, 100, 28);
-        specChanC.setBounds (70, y0 + 8, 130, 28); fftC.setBounds (210, y0 + 8, 90, 28); speedC.setBounds (310, y0 + 8, 100, 28); rangeC.setBounds (420, y0 + 8, 90, 28); smoothC.setBounds (520, y0 + 8, 130, 28);
-        knob (tiltS, 665);
-        linearT.setBounds (775, y0 + 8, 80, 28); fillT.setBounds (865, y0 + 8, 60, 28); holdT.setBounds (935, y0 + 8, 90, 28); freezeT2.setBounds (775, y0 + 48, 100, 28);
-        knob (zoomS, 70);
-        capRef.setBounds (70, y0 + 4, 150, 30); capMine.setBounds (230, y0 + 4, 130, 30); clearMine.setBounds (370, y0 + 4, 100, 30); saveShape.setBounds (480, y0 + 4, 100, 30); loadShape.setBounds (590, y0 + 4, 100, 30);
-        copyShape.setBounds (70, y0 + 44, 150, 30); pasteShape.setBounds (230, y0 + 44, 150, 30); copyEq.setBounds (390, y0 + 44, 130, 30); sideT.setBounds (530, y0 + 44, 110, 30);
-        knob (strengthS, 740); knob (maxS, 850);
-        gainS.setBounds (1040, y0 - 8, 96, 100);
-    }
-    void paintControlLabels (juce::Graphics& g)
-    {
-        g.setFont (F (12.0f)); g.setColour (kDim);
-        for (auto& c : caps)
+        for (size_t i = 0; i < v.size(); ++i)
         {
-            if (! c.comp->isVisible()) continue;
-            auto b = c.comp->getBounds();
-            if (dynamic_cast<juce::Slider*> (c.comp)) g.drawText (c.text.toUpperCase(), b.getX(), b.getY() - 2, b.getWidth(), 14, juce::Justification::centred);
-            else g.drawText (c.text.toUpperCase(), b.getX(), b.getY() - 16, b.getWidth(), 14, juce::Justification::centredLeft);
-        }
-        g.setColour (kDim); g.setFont (F (12.0f));
-        const char* hint[4] = { "Scope: pick the channels and how the picture is locked.", "Spectrum: drag nothing, hover the picture to read Hz, note and dB.", "Stereo field: the dots show where the sound sits between left and right.", "Shapes: 1 capture the reference, 2 capture yours (or watch live), 3 read the EQ curve." };
-        g.drawText (hint[page], 70, 714, 860, 18, juce::Justification::centredLeft);
-    }
-
-    //==========================================================================
-    WhiskerScopeProcessor& proc; catui::RenderGate gate; int page = 1; juce::Rectangle<int> dispR, metR;
-    juce::Point<float> hover; bool hasHover = false;
-    SpectrumAnalyzer an[2]; int anSize = 0; std::vector<float> bl, br, bm, bs, tmpA, tmpB, scopeA, scopeB; float lastDt = 0.033f; double sr = 48000;
-    PeakInfo peak; int scopeLen = 0; int periodFrame = 0, period = 0;
-    juce::Image gonio { juce::Image::ARGB, 484, 480, true };
-    int capturing = 0; ShapeCapture capture; bool showSide = false; float liveM[kShapeBands] = {}, liveS[kShapeBands] = {}; bool liveValid = false; juce::uint32 lastMs = 0;
-
-    float prm (const char* id) const { return proc.apvts.getRawParameterValue (id)->load(); }
-
-    //==========================================================================
-    void update()
-    {
-        const juce::uint32 now = juce::Time::getMillisecondCounter(); lastDt = lastMs ? juce::jlimit (0.005f, 0.2f, (now - lastMs) / 1000.0f) : 0.033f; lastMs = now;
-        sr = proc.sampleRateNow.load();
-        const bool freeze = prm ("freeze") > 0.5f;
-        if (page == 0 && ! freeze) updateScope();
-        if ((page == 1 && ! freeze) || page == 3) updateSpectrum();
-        if (page == 2) updateGonio();
-        if (page == 3 && capturing != 0) feedCapture();
-    }
-
-    void updateSpectrum()
-    {
-        const int fft = page == 3 ? 16384 : kFfts[juce::jlimit (0, 4, (int) prm ("fft"))];
-        if (fft != anSize) { anSize = fft; for (auto& a : an) a.prepare (sr, fft); bl.resize ((size_t) fft); br.resize ((size_t) fft); bm.resize ((size_t) fft); bs.resize ((size_t) fft); }
-        if (sr != lastSr) { lastSr = sr; for (auto& a : an) a.prepare (sr, fft); }
-        proc.ringL.latest (bl.data(), fft); proc.ringR.latest (br.data(), fft);
-        for (int i = 0; i < fft; ++i) { bm[(size_t) i] = 0.5f * (bl[(size_t) i] + br[(size_t) i]); bs[(size_t) i] = 0.5f * (bl[(size_t) i] - br[(size_t) i]); }
-        const int ch = page == 3 ? 5 : (int) prm ("specChan"); const float rel[3] = { 600.0f, 250.0f, 80.0f }; const float rl = rel[juce::jlimit (0, 2, (int) prm ("speed"))], tilt = page == 3 ? 0.0f : prm ("tilt");
-        const std::vector<float>* a = &bm; const std::vector<float>* b = nullptr;
-        switch (ch) { case 0: a = &bm; break; case 1: a = &bl; break; case 2: a = &br; break; case 3: a = &bs; break; case 4: a = &bl; b = &br; break; default: a = &bm; b = &bs; break; }
-        an[0].analyse (a->data(), tilt, 0.0f, rl, lastDt); if (b) an[1].analyse (b->data(), tilt, 0.0f, rl, lastDt);
-        peak = an[0].highest (-80.0f);
-        if (page == 3) { binsToBands (an[0].spectrum(), sr, anSize, liveM); binsToBands (an[1].spectrum(), sr, anSize, liveS); liveValid = true; }
-    }
-    double lastSr = 0;
-
-    void updateScope()
-    {
-        const float ms = prm ("scopeTime"); const int sync = (int) prm ("sync");
-        int n = juce::jlimit (16, 30000, (int) std::lround (ms * sr / 1000.0));
-        if (sync == 3) { const float bpm = proc.live.bpm.load(); n = juce::jlimit (16, 30000, (int) std::lround (60.0 / (bpm > 20 ? bpm : 120.0f) * sr)); }
-        const int total = juce::jmin (SampleRing::kSize, n * 2 + 64); std::vector<float>& L = tmpA; std::vector<float>& R = tmpB; L.resize ((size_t) total); R.resize ((size_t) total);
-        proc.ringL.latest (L.data(), total); proc.ringR.latest (R.data(), total);
-        int start = total - n;
-        if (sync == 1 || sync == 2)
-        {
-            std::vector<float> mono ((size_t) total); for (int i = 0; i < total; ++i) mono[(size_t) i] = 0.5f * (L[(size_t) i] + R[(size_t) i]);
-            if (sync == 2)
-            {
-                if ((periodFrame++ & 3) == 0) period = findPeriod (mono.data() + juce::jmax (0, total - 4096), juce::jmin (4096, total), (int) (sr / 2000.0), (int) (sr / 30.0));
-                if (period > 8) { n = juce::jlimit (16, 30000, period * 2); }
-            }
-            const int s = findRisingCrossing (mono.data(), total - n, 0, 0.0f); start = s >= 0 ? s : total - n; if (start + n > total) start = total - n;
-        }
-        scopeLen = n; scopeA.assign (L.begin() + start, L.begin() + start + n); scopeB.assign (R.begin() + start, R.begin() + start + n);
-    }
-
-    void updateGonio()
-    {
-        const int n = 1600; std::vector<float>& L = tmpA; std::vector<float>& R = tmpB; L.resize (n); R.resize (n); proc.ringL.latest (L.data(), n); proc.ringR.latest (R.data(), n);
-        juce::Graphics g (gonio); const auto r = gonio.getBounds().toFloat();
-        g.fillAll (juce::Colours::transparentBlack); g.setColour (juce::Colour (0xff06080a).withAlpha (0.22f)); g.fillRect (r);
-        const float cx = r.getCentreX(), cy = r.getCentreY(), rad = juce::jmin (r.getWidth(), r.getHeight()) * 0.46f, zoom = prm ("zoom");
-        for (int i = 0; i < n; ++i)
-        {
-            const float x = (R[(size_t) i] - L[(size_t) i]) * 0.70710678f * zoom, y = (L[(size_t) i] + R[(size_t) i]) * 0.70710678f * zoom;
-            const float px = cx + juce::jlimit (-1.2f, 1.2f, x) * rad, py = cy - juce::jlimit (-1.2f, 1.2f, y) * rad;
-            g.setColour (sp::mint().withAlpha (0.55f)); g.fillRect (px, py, 1.6f, 1.6f);
+            const float x0 = (i % 2 == 0) ? 11.0f : 11.0f + 101.5f + 10.0f, x1 = x0 + 101.5f, yy = y0 + 4.0f + 17.0f * (float) (i / 2);
+            mtxt (g, v[i].first, x0, yy, col::dim, juce::Justification::left, 11); mtxt (g, v[i].second, x1, yy, env.pal->acc, juce::Justification::right, 11);
         }
     }
-
-    void feedCapture()
+    static juce::Colour lvlCol (float d, float warn, float hot)
     {
-        if (! liveValid) return; float frameDb = -200.0f; { double e = 0; for (int i = 0; i < anSize; i += 8) e += (double) bm[(size_t) i] * bm[(size_t) i]; frameDb = powDb ((float) (e / (anSize / 8))); }
-        capture.add (liveM, liveS, frameDb, -60.0f);
+        const juce::Colour blue (47, 125, 255), purple (178, 77, 255), pink (255, 45, 149);
+        if (d < warn - 3) return blue; if (d < warn) return blue.interpolatedWith (purple, (d - (warn - 3)) / 3); if (d < hot - 2) return purple; if (d < hot) return purple.interpolatedWith (pink, (d - (hot - 2)) / 2); return pink;
     }
-    void toggleCapture (int which)
+    struct Ch { float fill, mark, hold; bool clipped; const char* lab; juce::Colour col; };
+    void neonBar (juce::Graphics& g, float x, float bw, float top, float ph, const Ch& ch, float warn, float hot)
     {
-        if (capturing == which)
+        const float seg = 1.5f; auto Y = [&] (float d) { return top + ph * (1.0f - (juce::jlimit (-60.0f, 0.0f, d) + 60.0f) / 60.0f); };
+        for (int i = 0; i < 40; ++i)
         {
-            Shape s; if (capture.result (s)) { s.name = which == 1 ? "Reference" : "Mine"; if (which == 1) { proc.refShape = s; proc.hasRef = true; } else { proc.mineShape = s; proc.hasMine = true; } }
-            capturing = 0;
+            const float d0 = -60.0f + (float) i * seg, d1 = d0 + seg, y1 = Y (d1), y0 = Y (d0), hh = std::max (1.0f, y0 - y1 - 1); const auto c = lvlCol ((d0 + d1) / 2, warn, hot);
+            const bool lit = ch.fill >= d0 + seg * 0.5f, isMark = ch.mark > -119 && ch.mark >= d0 && ch.mark < d1 && ch.mark > ch.fill + 0.5f;
+            if (lit) { g.setColour (c.withAlpha (0.22f)); g.fillRect (x - 1, y1, bw + 2, hh + 2); g.setColour (c); } else if (isMark) { g.setColour (juce::Colours::white.withAlpha (0.25f)); g.fillRect (x - 1, y1, bw + 2, hh + 2); g.setColour (juce::Colours::white.withAlpha (0.93f)); } else g.setColour (c.withAlpha (0.11f));
+            g.fillRect (x, y1 + 1, bw, hh);
         }
-        else { capturing = which; capture.reset(); }
+        if (ch.hold > -59) { const auto hc = ch.clipped ? juce::Colour (255, 45, 149) : lvlCol (ch.hold, warn, hot); g.setColour (hc.withAlpha (0.3f)); g.fillRect (x - 1, Y (ch.hold) - 2, bw + 2, 4.0f); g.setColour (hc); g.fillRect (x, Y (ch.hold) - 1, bw, 2.0f); }
+        if (ch.clipped) { g.setColour (juce::Colour (255, 45, 149).withAlpha (0.3f)); g.fillRect (x - 2, top - 12, bw + 4, 10.0f); }
+        g.setColour (ch.clipped ? juce::Colour (255, 45, 149) : juce::Colour (255, 45, 149).withAlpha (0.13f)); g.fillRect (x, top - 10, bw, 6.0f);
+        mtxt (g, ch.lab, x + bw / 2, top + ph + 14, ch.col, juce::Justification::horizontallyCentred, 12);
     }
-
-    //==========================================================================
-    void paintDisplay (juce::Graphics& g)
+    void paintLevels (juce::Graphics& g, const Scheme& S, bool lufs, bool two)
     {
-        g.setColour (kDisp); g.fillRoundedRectangle (dispR.toFloat(), 4.0f); g.setColour (kLine); g.drawRoundedRectangle (dispR.toFloat(), 4.0f, 1.0f);
-        g.saveState(); g.reduceClipRegion (dispR);
-        if (page == 0) paintScope (g); else if (page == 1) paintSpectrum (g); else if (page == 2) paintStereo (g); else paintShapes (g);
+        auto& P = env.p; const float W = 213, H = 303, top = 24, bot = H - 20, ph = bot - top, warn = lufs ? -14.0f : (float) env.st.warnDb, hot = lufs ? -8.0f : -0.5f;
+        g.saveState(); g.setOrigin (11, 32); g.reduceClipRegion (0, 0, 213, 303);
+        auto Y = [&] (float d) { return top + ph * (1.0f - (juce::jlimit (-60.0f, 0.0f, d) + 60.0f) / 60.0f); };
+        g.fillAll (col::disp);
+        const juce::String mm (P.choiceRaw ("mmode"));
+        auto chans = [&] (const Lv& o, bool isIn) -> std::array<Ch, 2>
+        {
+            if (lufs) { auto& L = isIn ? P.lufsIn : P.lufsOut; return { Ch { L.momentary(), -120, L.maxMomentary(), false, "M", S.l }, Ch { L.shortTerm(), -120, -120, false, "S", S.r } }; }
+            std::array<Ch, 2> a; for (int c = 0; c < 2; ++c) a[(size_t) c] = Ch { mm == "peak" ? o.disp[c] : o.rms[c], mm == "both" ? o.disp[c] : -120.0f, o.hold[c], o.clip[c], c ? "R" : "L", c ? S.r : S.l }; return a;
+        };
+        const auto A = chans (env.out, false); const float sw = 26; float bw; float xs[4] {};
+        if (two) { bw = std::floor (((W - 12 - sw) / 2 - 3) / 2); xs[0] = 4; xs[1] = 4 + bw + 3; xs[2] = 4 + 2 * bw + 3 + 2 + sw + 2; xs[3] = 4 + 3 * bw + 6 + 2 + sw + 2; }
+        else { bw = std::floor ((W - 40) / 2); xs[0] = 4; xs[1] = W - bw - 4; }
+        g.setColour (juce::Colour (0xff0a0d11)); for (int i = 0; i < (two ? 4 : 2); ++i) g.fillRect (xs[i], top - 12, bw, ph + 12);
+        const float cx = two ? 4 + 2 * bw + 3 + 1 + sw / 2 + 1 : W / 2;
+        if (two)
+        {
+            const auto B = chans (env.in, true); neonBar (g, xs[0], bw, top, ph, B[0], warn, hot); neonBar (g, xs[1], bw, top, ph, B[1], warn, hot); neonBar (g, xs[2], bw, top, ph, A[0], warn, hot); neonBar (g, xs[3], bw, top, ph, A[1], warn, hot);
+            mtxt (g, "IN", xs[0] + bw + 1.5f, 9, juce::Colours::white, juce::Justification::horizontallyCentred, 11); mtxt (g, "OUT", xs[2] + bw + 1.5f, 9, juce::Colours::white, juce::Justification::horizontallyCentred, 11);
+        }
+        else { neonBar (g, xs[0], bw, top, ph, A[0], warn, hot); neonBar (g, xs[1], bw, top, ph, A[1], warn, hot); mtxt (g, lufs ? "LUFS" : "dBFS", W / 2, 9, col::key, juce::Justification::horizontallyCentred, 10); }
+        const int last = two ? 3 : 1;
+        for (int d = 0; d >= -60; d -= 6)
+        {
+            const float y = Y ((float) d); mtxt (g, juce::String (d), cx, y + 3, juce::Colour (0xffe9d9a0), juce::Justification::horizontallyCentred, 10);
+            g.setColour (juce::Colours::white.withAlpha (0.1f)); g.fillRect (xs[0], std::floor (y), bw, 1.0f); g.fillRect (xs[last], std::floor (y), bw, 1.0f);
+        }
+        if (lufs) { const float li = P.lufsOut.integrated(); if (li > -100) { const float a = two ? xs[2] : xs[0], b = two ? xs[3] + bw : xs[1] + bw; g.setColour (S.acc); g.fillRect (a, Y (li) - 0.25f, b - a, 1.5f); mtxt (g, "I", a - 2, Y (li) - 3, S.acc, juce::Justification::right, 10); } }
         g.restoreState();
     }
-
-    void paintScope (juce::Graphics& g)
+    void paintCorr (juce::Graphics& g, const Scheme& S)
     {
-        auto r = dispR.toFloat().reduced (8.0f); r.removeFromLeft (34.0f); r.removeFromBottom (18.0f);
-        g.setFont (F (11.0f)); const float amps[7] = { 1.0f, 0.5f, 0.25f, 0.0f, -0.25f, -0.5f, -1.0f }; const char* lab[7] = { "0 dB", "-6", "-12", "-inf", "-12", "-6", "0 dB" };
-        for (int i = 0; i < 7; ++i) { const float y = r.getCentreY() - amps[i] * r.getHeight() * 0.5f; g.setColour (i == 3 ? juce::Colour (0xff2c3a36) : kGrid); g.drawHorizontalLine ((int) y, r.getX(), r.getRight()); g.setColour (kAxis); g.drawText (lab[i], (int) dispR.getX() + 2, (int) y - 7, 36, 14, juce::Justification::centredLeft); }
-        if (scopeLen < 2 || scopeA.empty()) return;
-        const double totalMs = scopeLen * 1000.0 / sr; const double step = totalMs > 200 ? 50 : totalMs > 80 ? 20 : totalMs > 30 ? 10 : totalMs > 12 ? 5 : totalMs > 5 ? 2 : 1;
-        for (double t = 0; t <= totalMs; t += step) { const float x = r.getX() + (float) (t / totalMs) * r.getWidth(); g.setColour (kGrid); g.drawVerticalLine ((int) x, r.getY(), r.getBottom()); g.setColour (kAxis); g.drawText (juce::String (t, step < 1 ? 1 : 0) + " ms", (int) x - 20, (int) r.getBottom() + 3, 40, 14, juce::Justification::centred); }
-        const int ch = (int) prm ("scopeChan"); auto trace = [&] (auto fn, juce::Colour c)
+        g.setColour (col::disp); g.fillRoundedRectangle (11.0f, 561.0f, 213.0f, 46.0f, 3.0f); g.setColour (col::line); g.drawRoundedRectangle (11.5f, 561.5f, 212.0f, 45.0f, 3.0f, 1.0f);
+        g.saveState(); g.setOrigin (12, 562); const float w2 = 211; auto X = [&] (float v) { return 8 + (w2 - 16) * (v + 1) / 2; };
+        g.setColour (juce::Colour (0xff101418)); g.fillRect (8.0f, 18.0f, w2 - 16, 12.0f);
+        if (! env.silent) { g.setColour (env.corr >= 0 ? S.l : S.r); g.fillRect (std::min (X (0), X (env.corr)), 18.0f, std::abs (X (env.corr) - X (0)), 12.0f); }
+        for (float v : { -1.0f, -0.5f, 0.0f, 0.5f, 1.0f })
         {
-            juce::Path p; const int w = (int) r.getWidth(); const int n = (int) scopeA.size();
-            for (int px = 0; px < w; ++px)
-            {
-                const int i0 = (int) ((double) px / w * n), i1 = juce::jmax (i0 + 1, (int) ((double) (px + 1) / w * n)); float lo = 1e9f, hi = -1e9f;
-                for (int i = i0; i < juce::jmin (n, i1); ++i) { const float v = fn (i); lo = juce::jmin (lo, v); hi = juce::jmax (hi, v); }
-                const float x = r.getX() + (float) px, y0 = r.getCentreY() - juce::jlimit (-1.0f, 1.0f, hi) * r.getHeight() * 0.5f, y1 = r.getCentreY() - juce::jlimit (-1.0f, 1.0f, lo) * r.getHeight() * 0.5f;
-                if (n > w * 2) { p.startNewSubPath (x, y0); p.lineTo (x, y1 + 0.5f); } else { if (px == 0) p.startNewSubPath (x, y0); else p.lineTo (x, y0); }
-            }
-            g.setColour (c); g.strokePath (p, juce::PathStrokeType (1.5f));
-        };
-        auto fl = [this] (int i) { return scopeA[(size_t) i]; }; auto fr = [this] (int i) { return scopeB[(size_t) i]; };
-        auto fm = [this] (int i) { return 0.5f * (scopeA[(size_t) i] + scopeB[(size_t) i]); }; auto fs = [this] (int i) { return 0.5f * (scopeA[(size_t) i] - scopeB[(size_t) i]); };
-        if (ch == 0) { trace (fl, kL); trace (fr, kR.withAlpha (0.85f)); } else if (ch == 1) trace (fl, kL); else if (ch == 2) trace (fr, kR); else if (ch == 3) trace (fm, kM); else { trace (fm, kM); trace (fs, kS); }
-        g.setColour (kDim); g.setFont (F (12.0f)); g.drawText (juce::String (totalMs, 1) + " ms visible" + (period > 8 && prm ("sync") == 2 ? "   period " + juce::String (sr / period, 1) + " Hz (" + juce::String (noteName (sr / period)) + ")" : ""), dispR.getX() + 40, dispR.getY() + 6, 500, 16, juce::Justification::centredLeft);
-    }
-
-    // value of the analyser at each pixel column, with optional smoothing across frequency
-    std::vector<float> columns (const SpectrumAnalyzer& a, const std::vector<float>& db, int w, bool lin, int smooth) const
-    {
-        std::vector<float> out ((size_t) w, -200.0f); const double bh = sr / a.fftSize(); const int bins = (int) db.size();
-        for (int px = 0; px < w; ++px)
-        {
-            const double f0 = xToFreq ((float) px - 0.5f, lin, (float) w), f1 = xToFreq ((float) px + 0.5f, lin, (float) w); double lo = juce::jmax (20.0, f0), hi = juce::jmax (lo, f1);
-            if (smooth > 0) { const double half = std::pow (2.0, (smooth == 1 ? 1.0 / 6.0 : 1.0 / 3.0) * 0.5); const double c = std::sqrt (lo * hi); lo = c / half; hi = c * half; }
-            int k0 = juce::jlimit (1, bins - 2, (int) std::floor (lo / bh)), k1 = juce::jlimit (k0, bins - 2, (int) std::ceil (hi / bh));
-            if (smooth > 0) { double p = 0; for (int k = k0; k <= k1; ++k) p += std::pow (10.0, db[(size_t) k] / 10.0); out[(size_t) px] = (float) (10.0 * std::log10 (juce::jmax (1e-20, p / (k1 - k0 + 1)))); }
-            else { float m = -200.0f; for (int k = k0; k <= k1; ++k) m = juce::jmax (m, db[(size_t) k]); if (k1 - k0 < 1) { const double fk = 0.5 * (lo + hi) / bh; const int kk = juce::jlimit (1, bins - 2, (int) fk); const float t = (float) (fk - kk); m = db[(size_t) kk] * (1 - t) + db[(size_t) kk + 1] * t; } out[(size_t) px] = m; }
+            g.setColour (juce::Colours::white.withAlpha (0.33f)); g.fillRect (std::floor (X (v)), 14.0f, 1.0f, 20.0f);
+            mtxt (g, v == 0 ? juce::String ("0") : (v > 0 ? "+" : "") + juce::String (v, (v == 0.5f || v == -0.5f) ? 1 : 0), X (v), 44, S.acc, v == -1 ? juce::Justification::left : v == 1 ? juce::Justification::right : juce::Justification::horizontallyCentred, 9);
         }
-        return out;
+        mtxt (g, "Antiphase", 8, 11, S.r, juce::Justification::left, 9); mtxt (g, "Stereo", w2 / 2, 11, col::key, juce::Justification::horizontallyCentred, 9); mtxt (g, "Mono", w2 - 8, 11, S.l, juce::Justification::right, 9);
+        g.restoreState();
     }
-
-    void paintSpectrum (juce::Graphics& g)
-    {
-        auto r = dispR.toFloat().reduced (8.0f); r.removeFromLeft (40.0f); r.removeFromBottom (20.0f); r.removeFromTop (6.0f);
-        const float floors[3] = { -60.0f, -90.0f, -120.0f }; const float fl = floors[juce::jlimit (0, 2, (int) prm ("range"))]; const bool lin = prm ("linear") > 0.5f;
-        auto Y = [&] (float db) { return r.getY() + juce::jlimit (0.0f, 1.0f, -db / -fl) * r.getHeight(); };
-        g.setFont (F (11.0f));
-        for (float d = 0; d >= fl; d -= (fl == -120.0f ? 20.0f : 10.0f)) { g.setColour (kGrid); g.drawHorizontalLine ((int) Y (d), r.getX(), r.getRight()); g.setColour (kAxis); g.drawText (juce::String ((int) d), (int) dispR.getX() + 2, (int) Y (d) - 7, 38, 14, juce::Justification::centredRight); }
-        const double fr[] = { 20, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000 }; const double frl[] = { 0, 2000, 4000, 6000, 8000, 10000, 12000, 14000, 16000, 18000, 20000 };
-        auto vline = [&] (double f) { const float x = r.getX() + freqToX (f, lin, r.getWidth()); g.setColour (kGrid); g.drawVerticalLine ((int) x, r.getY(), r.getBottom()); g.setColour (kAxis); g.drawText (f >= 1000 ? juce::String (f / 1000) + "k" : juce::String ((int) f), (int) x - 20, (int) r.getBottom() + 4, 40, 14, juce::Justification::centred); };
-        if (lin) for (double f : frl) vline (f); else for (double f : fr) vline (f);
-        if (anSize == 0) return;
-        const int w = (int) r.getWidth(), ch = (int) prm ("specChan"), sm = (int) prm ("smooth"); const bool two = ch >= 4, fill = prm ("fill") > 0.5f, hold = prm ("hold") > 0.5f;
-        auto draw = [&] (const SpectrumAnalyzer& a, juce::Colour c)
-        {
-            auto col = columns (a, a.spectrum(), w, lin, sm); juce::Path line, area; area.startNewSubPath (r.getX(), r.getBottom());
-            for (int px = 0; px < w; ++px) { const float y = Y (col[(size_t) px]); if (px == 0) line.startNewSubPath (r.getX(), y); else line.lineTo (r.getX() + (float) px, y); area.lineTo (r.getX() + (float) px, y); }
-            area.lineTo (r.getRight(), r.getBottom()); area.closeSubPath();
-            if (fill) { g.setGradientFill (juce::ColourGradient (c.withAlpha (0.55f), 0, r.getY(), c.withAlpha (0.04f), 0, r.getBottom(), false)); g.fillPath (area); }
-            g.setColour (c); g.strokePath (line, juce::PathStrokeType (1.5f));
-            if (hold) { auto hc = columns (a, a.peakHold(), w, lin, 0); juce::Path hp; for (int px = 0; px < w; ++px) { const float y = Y (hc[(size_t) px]); if (px == 0) hp.startNewSubPath (r.getX(), y); else hp.lineTo (r.getX() + (float) px, y); } g.setColour (c.brighter (0.4f).withAlpha (0.55f)); g.strokePath (hp, juce::PathStrokeType (1.0f)); }
-            return col;
-        };
-        const juce::Colour c0 = ch == 1 ? kL : ch == 2 ? kR : ch == 3 ? kS : ch == 4 ? kL : kM, c1 = ch == 4 ? kR : kS;
-        auto col0 = draw (an[0], c0); if (two) draw (an[1], c1);
-        if (peak.db > -80.0f && peak.hz > 20.0)
-        {
-            const float x = r.getX() + freqToX (peak.hz, lin, r.getWidth()), y = Y (peak.db); g.setColour (sp::gold()); g.fillEllipse (x - 3, y - 3, 6, 6);
-            g.setFont (F (13.0f, true)); g.drawText (juce::String (peak.db, 1) + " dB  " + juce::String (peak.hz, peak.hz < 1000 ? 1 : 0) + " Hz  " + juce::String (noteName (peak.hz)), juce::Rectangle<float> (juce::jmin (x + 8, r.getRight() - 230), juce::jmax (r.getY(), y - 22), 230, 16), juce::Justification::centredLeft);
-        }
-        if (hasHover && r.contains (hover))
-        {
-            const double f = xToFreq (hover.x - r.getX(), lin, r.getWidth()); const int px = juce::jlimit (0, w - 1, (int) (hover.x - r.getX()));
-            g.setColour (juce::Colours::white.withAlpha (0.4f)); g.drawVerticalLine ((int) hover.x, r.getY(), r.getBottom());
-            g.setColour (kInk); g.setFont (F (13.0f)); g.drawText (juce::String (f, f < 1000 ? 1 : 0) + " Hz  " + juce::String (noteName (f)) + "  " + juce::String (col0[(size_t) px], 1) + " dB", juce::Rectangle<float> (juce::jmin (hover.x + 10, r.getRight() - 230), r.getY() + 4, 230, 16), juce::Justification::centredLeft);
-        }
-    }
-
-    void paintStereo (juce::Graphics& g)
-    {
-        const auto gr = juce::Rectangle<float> ((float) dispR.getX(), (float) dispR.getY(), 484.0f, 480.0f);
-        g.drawImageAt (gonio, dispR.getX(), dispR.getY());
-        const float cx = gr.getCentreX(), cy = gr.getCentreY(), rad = 480 * 0.46f, zoom = prm ("zoom");
-        g.setFont (F (11.0f)); const float rings[4] = { 0.0f, -6.0f, -12.0f, -24.0f };
-        for (float d : rings) { const float rr = rad * zoom * std::pow (10.0f, d / 20.0f); if (rr < rad * 1.3f && rr > 4) { g.setColour (juce::Colour (0xff2c3a36)); g.drawEllipse (cx - rr, cy - rr, rr * 2, rr * 2, 1.0f); g.setColour (kAxis); g.drawText (juce::String ((int) d) + " dB", (int) (cx + rr * 0.707f + 2), (int) (cy - rr * 0.707f - 12), 44, 12, juce::Justification::centredLeft); } }
-        g.setColour (juce::Colour (0xff2c3a36)); g.drawLine (cx, gr.getY() + 6, cx, gr.getBottom() - 6); g.drawLine (gr.getX() + 6, cy, gr.getRight() - 6, cy); g.drawLine (cx - rad * 0.7f, cy + rad * 0.7f, cx + rad * 0.7f, cy - rad * 0.7f); g.drawLine (cx - rad * 0.7f, cy - rad * 0.7f, cx + rad * 0.7f, cy + rad * 0.7f);
-        g.setColour (kAxis); g.setFont (F (13.0f, true)); g.drawText ("M", (int) cx - 10, (int) gr.getY() + 4, 20, 14, juce::Justification::centred); g.drawText ("L", (int) (cx - rad * 0.7f) - 18, (int) (cy - rad * 0.7f) - 10, 20, 14, juce::Justification::centred); g.drawText ("R", (int) (cx + rad * 0.7f) + 2, (int) (cy - rad * 0.7f) - 10, 20, 14, juce::Justification::centred);
-        // right side: correlation meter and numbers
-        const float corr = proc.live.corr.load(), width = proc.live.width.load(), bal = proc.live.balance.load(), loss = proc.live.monoLoss.load(); StereoStats st; st.correlation = corr; st.monoLossDb = loss;
-        auto pr = juce::Rectangle<float> ((float) dispR.getX() + 504, (float) dispR.getY() + 24, 386.0f, 440.0f);
-        g.setColour (kInk); g.setFont (F (15.0f, true)); g.drawText ("CORRELATION", pr.getX(), pr.getY(), 300, 18, juce::Justification::centredLeft);
-        auto bar = pr.withTrimmedTop (28).withHeight (30); g.setColour (juce::Colour (0xff0e1012)); g.fillRoundedRectangle (bar, 3.0f); g.setColour (kLine); g.drawRoundedRectangle (bar, 3.0f, 1.0f);
-        const float bx = bar.getX() + (corr + 1.0f) * 0.5f * bar.getWidth(); g.setColour (corr < 0 ? kR : sp::mint()); g.fillRect (juce::Rectangle<float> (juce::jmin (bx, bar.getCentreX()), bar.getY() + 3, std::fabs (bx - bar.getCentreX()), bar.getHeight() - 6));
-        g.setColour (kInk); g.fillRect (bx - 1.0f, bar.getY(), 3.0f, bar.getHeight());
-        g.setColour (kAxis); g.setFont (F (11.0f)); g.drawText ("-1 Antiphase", (int) bar.getX(), (int) bar.getBottom() + 3, 110, 14, juce::Justification::centredLeft); g.drawText ("0 Stereo", (int) bar.getCentreX() - 40, (int) bar.getBottom() + 3, 80, 14, juce::Justification::centred); g.drawText ("+1 Mono", (int) bar.getRight() - 90, (int) bar.getBottom() + 3, 90, 14, juce::Justification::centredRight);
-        float y = bar.getBottom() + 40.0f; auto row = [&] (const juce::String& a, const juce::String& b2, juce::Colour c = kInk) { g.setColour (kDim); g.setFont (F (14.0f)); g.drawText (a, pr.getX(), y, 200, 20, juce::Justification::centredLeft); g.setColour (c); g.setFont (F (16.0f, true)); g.drawText (b2, pr.getX() + 180, y, 200, 20, juce::Justification::centredRight); y += 30.0f; };
-        row ("Correlation", juce::String (corr, 2)); row ("Width (side share)", juce::String (juce::roundToInt (width * 100.0f)) + " %"); row ("Balance", bal < -0.02f ? "L " + juce::String (juce::roundToInt (-bal * 100.0f)) + " %" : bal > 0.02f ? "R " + juce::String (juce::roundToInt (bal * 100.0f)) + " %" : "centre");
-        row ("Mono loss", juce::String (loss, 1) + " dB", loss < -3.0f ? sp::cherry() : kInk);
-        const char* v = StereoMeter::verdict (st); const juce::Colour vc = std::string (v) == "Mono safe" ? sp::mint() : std::string (v) == "Check mono" ? sp::gold() : sp::cherry();
-        y += 8; g.setColour (vc); g.setFont (F (26.0f, true)); g.drawText (proc.live.hasSignal.load() ? v : "No signal", pr.getX(), y, 380, 34, juce::Justification::centredLeft);
-        g.setColour (kDim); g.setFont (F (12.0f)); juce::Rectangle<float> note (pr.getX(), y + 40, 380, 70); g.drawFittedText ("Mono loss is how much quieter the sound gets when left and right are added. Thresholds are rules of thumb: below 0.2 correlation or more than 3 dB lost means check it in mono.", note.toNearestInt(), juce::Justification::topLeft, 4);
-    }
-
-    std::vector<float> curveEq (bool side) const
-    {
-        const auto& ref = side ? proc.refShape.side : proc.refShape.mid; std::vector<float> mine (kShapeBands);
-        for (int i = 0; i < kShapeBands; ++i) mine[(size_t) i] = proc.hasMine ? (side ? proc.mineShape.side[(size_t) i] : proc.mineShape.mid[(size_t) i]) : (side ? liveS[i] : liveM[i]);
-        return matchingEq (ref, mine, prm ("strength"), prm ("maxMove"));
-    }
-    juce::String eqText() const
-    {
-        if (! proc.hasRef) return {}; juce::String s; for (int sd = 0; sd < 2; ++sd) { auto eq = curveEq (sd == 1); s << (sd ? "Side:\n" : "Mid:\n"); for (int i = 0; i < kShapeBands; i += 2) if (std::fabs (eq[(size_t) i]) >= 0.5f) s << juce::String (shapeBandHz (i), 0) << " Hz: " << (eq[(size_t) i] > 0 ? "+" : "") << juce::String (eq[(size_t) i], 1) << " dB\n"; }
-        return s;
-    }
-    void paintShapes (juce::Graphics& g)
-    {
-        auto r = dispR.toFloat().reduced (8.0f); r.removeFromLeft (40.0f); r.removeFromBottom (20.0f); r.removeFromTop (6.0f); auto top = r.removeFromTop (r.getHeight() * 0.58f); r.removeFromTop (16.0f);
-        const bool sd = showSide; const char* nm = sd ? "SIDE" : "MID";
-        auto X = [&] (int i) { return top.getX() + (i + 0.5f) / kShapeBands * top.getWidth(); };
-        const float lo = -90.0f, hi = -10.0f; auto Yd = [&] (float d) { return top.getY() + (1.0f - juce::jlimit (0.0f, 1.0f, (d - lo) / (hi - lo))) * top.getHeight(); };
-        g.setFont (F (11.0f)); for (float d = hi; d >= lo; d -= 20) { g.setColour (kGrid); g.drawHorizontalLine ((int) Yd (d), top.getX(), top.getRight()); g.setColour (kAxis); g.drawText (juce::String ((int) d), (int) dispR.getX() + 2, (int) Yd (d) - 7, 38, 14, juce::Justification::centredRight); }
-        const int ticks[] = { 0, 6, 12, 18, 24, 30, 36, 42, 48, 54 }; for (int t : ticks) { const float x = X (t); g.setColour (kGrid); g.drawVerticalLine ((int) x, top.getY(), top.getBottom()); g.setColour (kAxis); const double f = shapeBandHz (t); g.drawText (f >= 1000 ? juce::String (f / 1000, 1) + "k" : juce::String ((int) f), (int) x - 20, (int) top.getBottom() + 3, 40, 14, juce::Justification::centred); }
-        auto plot = [&] (const float* v, juce::Colour c, float th, bool dashed = false)
-        {
-            juce::Path p; for (int i = 0; i < kShapeBands; ++i) { if (i == 0) p.startNewSubPath (X (i), Yd (v[i])); else p.lineTo (X (i), Yd (v[i])); } g.setColour (c);
-            if (dashed) { juce::PathStrokeType (th).createDashedStroke (p, p, std::array<float, 2> { 5.0f, 4.0f }.data(), 2); g.fillPath (p); } else g.strokePath (p, juce::PathStrokeType (th));
-        };
-        if (proc.hasRef) plot ((sd ? proc.refShape.side : proc.refShape.mid).data(), kM, 2.0f);
-        if (proc.hasMine) plot ((sd ? proc.mineShape.side : proc.mineShape.mid).data(), sp::mint(), 2.0f); else if (liveValid) plot (sd ? liveS : liveM, sp::mint(), 1.5f, true);
-        g.setFont (F (13.0f, true)); g.setColour (kM); g.drawText ("Reference " + juce::String (nm) + (proc.hasRef ? "" : " (none yet)"), (int) top.getX() + 6, (int) top.getY() + 2, 260, 16, juce::Justification::centredLeft);
-        g.setColour (sp::mint()); g.drawText (proc.hasMine ? "Mine (captured)" : "Mine (live, dashed)", (int) top.getX() + 6, (int) top.getY() + 18, 260, 16, juce::Justification::centredLeft);
-        if (capturing) { g.setColour (kR); g.setFont (F (15.0f, true)); g.drawText ("CAPTURING " + juce::String (capturing == 1 ? "REFERENCE" : "MINE") + "  " + juce::String (capture.count()) + " frames. Press the button again to finish.", (int) top.getX() + 270, (int) top.getY() + 4, 560, 18, juce::Justification::centredLeft); }
-        // EQ curve
-        auto eqr = r; g.setColour (kInk); g.setFont (F (13.0f, true)); g.drawText ("EQ THAT MOVES MINE TOWARD THE REFERENCE (" + juce::String (nm) + ")", (int) eqr.getX(), (int) dispR.getBottom() - (int) eqr.getHeight() - 26, 600, 16, juce::Justification::centredLeft);
-        eqr.removeFromTop (4.0f); const float mm = prm ("maxMove"); auto Ye = [&] (float d) { return eqr.getCentreY() - d / mm * eqr.getHeight() * 0.5f; };
-        g.setColour (juce::Colour (0xff2c3a36)); g.drawHorizontalLine ((int) Ye (0), eqr.getX(), eqr.getRight()); g.setColour (kAxis); g.setFont (F (11.0f)); g.drawText ("+" + juce::String ((int) mm), (int) dispR.getX() + 2, (int) Ye (mm) - 6, 38, 12, juce::Justification::centredRight); g.drawText ("-" + juce::String ((int) mm), (int) dispR.getX() + 2, (int) Ye (-mm) - 6, 38, 12, juce::Justification::centredRight); g.drawText ("0", (int) dispR.getX() + 2, (int) Ye (0) - 6, 38, 12, juce::Justification::centredRight);
-        if (! proc.hasRef) { g.setColour (kDim); g.setFont (F (15.0f)); g.drawText ("Capture or load a reference shape to see the EQ curve.", eqr.toNearestInt(), juce::Justification::centred); return; }
-        auto eq = curveEq (sd); juce::Path p; for (int i = 0; i < kShapeBands; ++i) { const float x = eqr.getX() + (i + 0.5f) / kShapeBands * eqr.getWidth(), y = Ye (eq[(size_t) i]); if (i == 0) p.startNewSubPath (x, y); else p.lineTo (x, y); }
-        g.setColour (sp::orange()); g.strokePath (p, juce::PathStrokeType (2.5f));
-        int worst = 0; for (int i = 1; i < kShapeBands; ++i) if (std::fabs (eq[(size_t) i]) > std::fabs (eq[(size_t) worst])) worst = i;
-        g.setColour (kInk); g.setFont (F (13.0f)); g.drawText (std::fabs (eq[(size_t) worst]) < 0.5f ? "Already close to the reference." : juce::String (eq[(size_t) worst] > 0 ? "Biggest move: boost " : "Biggest move: cut ") + juce::String (std::fabs (eq[(size_t) worst]), 1) + " dB around " + juce::String (shapeBandHz (worst), 0) + " Hz (" + juce::String (noteName (shapeBandHz (worst))) + ")", (int) eqr.getX() + 10, (int) eqr.getY() + 2, 560, 16, juce::Justification::centredLeft);
-    }
-
-    //==========================================================================
-    void paintMeters (juce::Graphics& g)
-    {
-        g.setColour (kPanel2); g.fillRoundedRectangle (metR.toFloat(), 4.0f); g.setColour (kLine); g.drawRoundedRectangle (metR.toFloat(), 4.0f, 1.0f);
-        g.setColour (kDim); g.setFont (F (13.0f, true)); g.drawText ("LEVEL", metR.getX() + 8, metR.getY() + 6, 80, 16, juce::Justification::centredLeft);
-        const float pk[4] = { proc.live.peakL.load(), proc.live.peakR.load(), proc.live.peakM.load(), proc.live.peakS.load() }, rm[4] = { proc.live.rmsL.load(), proc.live.rmsR.load(), proc.live.rmsM.load(), proc.live.rmsS.load() };
-        const char* nn[4] = { "L", "R", "M", "S" }; const juce::Colour cc[4] = { kL, kR, kM, kS };
-        const float top = (float) metR.getY() + 34.0f, bot = (float) metR.getY() + 270.0f; auto Y = [&] (float d) { return top + (juce::jlimit (-60.0f, 0.0f, d) / -60.0f) * (bot - top); };
-        g.setFont (F (10.0f)); for (int d = 0; d >= -60; d -= 6) { g.setColour (kGrid); g.drawHorizontalLine ((int) Y ((float) d), (float) metR.getX() + 30, (float) metR.getRight() - 6); g.setColour (d >= -6 ? sp::amber() : kAxis); g.drawText (juce::String (d), metR.getX() + 2, (int) Y ((float) d) - 6, 26, 12, juce::Justification::centredRight); }
-        for (int i = 0; i < 4; ++i)
-        {
-            const float x = (float) metR.getX() + 36.0f + i * 34.0f, db = dbOf (rm[i]); g.setColour (cc[i].withAlpha (0.85f)); g.fillRect (x, Y (db), 22.0f, bot - Y (db));
-            const float pd = dbOf (pk[i]); g.setColour (pd > -0.1f ? kR : juce::Colours::white); g.fillRect (x, Y (pd), 22.0f, 2.0f);
-            g.setColour (cc[i]); g.setFont (F (12.0f, true)); g.drawText (nn[i], (int) x - 4, (int) bot + 2, 30, 14, juce::Justification::centred);
-            g.setColour (kInk); g.setFont (F (10.0f)); g.drawText (pd > -90 ? juce::String (pd, 1) : "-inf", (int) x - 6, (int) bot + 16, 34, 12, juce::Justification::centred);
-        }
-        g.setColour (kDim); g.setFont (F (10.0f)); g.drawText ("bars: RMS  line: peak", metR.getX() + 6, (int) bot + 30, 166, 12, juce::Justification::centredLeft);
-        float y = bot + 52.0f; const float lufs = proc.live.lufs.load(); auto row = [&] (const char* a, const juce::String& b, juce::Colour c = kInk) { g.setColour (kDim); g.setFont (F (12.0f)); g.drawText (a, metR.getX() + 8, (int) y, 80, 16, juce::Justification::centredLeft); g.setColour (c); g.setFont (F (14.0f, true)); g.drawText (b, metR.getX() + 80, (int) y, 90, 16, juce::Justification::centredRight); y += 20; };
-        row ("Momentary", lufs > -150 ? juce::String (lufs, 1) + " LUFS" : "-inf"); row ("Correlation", juce::String (proc.live.corr.load(), 2)); row ("Clip", (pk[0] > 0.999f || pk[1] > 0.999f) ? "yes" : "no", (pk[0] > 0.999f || pk[1] > 0.999f) ? kR : kInk);
-        g.setColour (kDim); g.setFont (F (10.0f)); g.drawText ("Loudness: K weighted, 400 ms. A monitor, not a certified meter.", metR.getX() + 6, (int) y, 166, 28, juce::Justification::topLeft);
-    }
-
-    //==========================================================================
-    void saveShapeDialog()
-    {
-        if (! proc.hasRef) { juce::AlertWindow::showAsync (juce::MessageBoxOptions().withIconType (juce::MessageBoxIconType::InfoIcon).withTitle ("Save shape").withMessage ("Capture or load a reference shape first.").withButton ("OK"), nullptr); return; }
-        auto* w = new juce::AlertWindow ("Save shape", "Name of the shape:", juce::MessageBoxIconType::NoIcon); w->addTextEditor ("n", proc.refShape.name.empty() ? "My shape" : juce::String (proc.refShape.name)); w->addButton ("Save", 1); w->addButton ("Cancel", 0);
-        w->enterModalState (true, juce::ModalCallbackFunction::create ([this, w] (int r)
-        {
-            if (r != 1)
-                return;
-            auto name = w->getTextEditorContents ("n").trim().retainCharacters ("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 _-").substring (0, 40); if (name.isEmpty()) name = "My shape";
-            proc.refShape.name = name.toStdString(); auto dir = WhiskerScopeProcessor::shapeDir(); dir.createDirectory(); dir.getChildFile (name + ".wshape").replaceWithText (juce::String (shapeToText (proc.refShape)));
-        }), true);
-    }
-    static Shape builtin (int kind)
-    {
-        Shape s; const char* nm[3] = { "Start: pink (flat to the ear)", "Start: bright lead", "Start: heavy bass" }; s.name = nm[kind];
-        for (int i = 0; i < kShapeBands; ++i)
-        {
-            const double f = shapeBandHz (i), oct = std::log2 (f / 1000.0); double d = -3.0 * oct;                 // pink: -3 dB per octave
-            if (kind == 1) d = -1.5 * oct + (f > 5000 ? -6.0 : 0.0); else if (kind == 2) d = -4.5 * oct + 8.0 * std::exp (-std::pow (std::log2 (f / 60.0), 2.0));
-            s.mid[(size_t) i] = (float) (-40.0 + d); s.side[(size_t) i] = (float) (-52.0 + d - (kind == 2 ? 6.0 : 0.0));
-        }
-        return s;
-    }
-    void loadShapeMenu()
-    {
-        juce::PopupMenu m; m.addSectionHeader ("Starting points (made by us, not measured from any song)"); for (int i = 0; i < 3; ++i) m.addItem (100 + i, builtin (i).name);
-        auto files = WhiskerScopeProcessor::shapeDir().findChildFiles (juce::File::findFiles, false, "*.wshape"); if (files.size() > 0) { m.addSeparator(); m.addSectionHeader ("Your shapes"); for (int i = 0; i < juce::jmin (50, files.size()); ++i) m.addItem (200 + i, files[i].getFileNameWithoutExtension()); }
-        m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&loadShape), [this, files] (int id)
-        {
-            if (id >= 100 && id < 103) { proc.refShape = builtin (id - 100); proc.hasRef = true; }
-            else if (id >= 200 && id - 200 < files.size()) { Shape s; if (files[id - 200].getSize() < 5000 && shapeFromText (files[id - 200].loadFileAsString().trim().toStdString(), s)) { proc.refShape = s; proc.hasRef = true; } }
-        });
-    }
-    void pasteShapeText()
-    {
-        Shape s; if (shapeFromText (juce::SystemClipboard::getTextFromClipboard().trim().toStdString(), s)) { proc.refShape = s; proc.hasRef = true; }
-        else juce::AlertWindow::showAsync (juce::MessageBoxOptions().withIconType (juce::MessageBoxIconType::WarningIcon).withTitle ("Paste shape").withMessage ("The clipboard does not hold a valid shape text.").withButton ("OK"), nullptr);
-    }
-    void showSettings()
-    {
-        auto* w = new juce::AlertWindow ("Settings", "Whisker Scope v" JucePlugin_VersionString, juce::MessageBoxIconType::NoIcon);
-        w->addButton (proc.tooltips ? "Info bubbles: ON (click to turn off)" : "Info bubbles: OFF (click to turn on)", 1); w->addButton ("Close", 0);
-        w->enterModalState (true, juce::ModalCallbackFunction::create ([this, w] (int r) { if (r == 1) { proc.tooltips = ! proc.tooltips; if (onTooltipChange) onTooltipChange(); } }), true);
-    }
-    void showAbout()
-    {
-        juce::AlertWindow::showAsync (juce::MessageBoxOptions().withIconType (juce::MessageBoxIconType::NoIcon).withTitle ("About Whisker Scope")
-            .withMessage ("Whisker Scope v" JucePlugin_VersionString "\nFree and open source (AGPL-3.0-or-later), made by Studio 87.\nIt collects nothing, needs no account and never changes your sound.\n\nIf it helps your music, a coffee keeps new plugins coming.")
-            .withButton ("Support on Ko-fi").withButton ("Close"), [] (int r) { if (r == 1) juce::URL ("https://ko-fi.com/studio87").launchInDefaultBrowser(); });
-    }
-public:
-    std::function<void()> onTooltipChange;
 };
 
 //==============================================================================
-WhiskerScopeEditor::WhiskerScopeEditor (WhiskerScopeProcessor& p) : AudioProcessorEditor (&p), proc (p)
+// The preset name box in the header.
+class PresetBox : public juce::Component, public juce::SettableTooltipClient
 {
-    static Look look; setLookAndFeel (&look);
-    content = std::make_unique<Content> (p); addAndMakeVisible (*content); content->setSize (W, H);
-    tooltip = std::make_unique<juce::TooltipWindow> (this, p.tooltips ? 1000 : 100000000);
-    content->onTooltipChange = [this] { tooltip->setMillisecondsBeforeTipAppears (proc.tooltips ? 1000 : 100000000); };
-    constrainer.setFixedAspectRatio ((double) W / H); constrainer.setSizeLimits (700, (int) (700.0 * H / W), 2400, (int) (2400.0 * H / W)); setConstrainer (&constrainer);
-    corner = std::make_unique<juce::ResizableCornerComponent> (this, &constrainer); addAndMakeVisible (*corner);
-    setResizable (true, false);
-    const int w = juce::jlimit (700, 2400, proc.editorWidth); setSize (w, (int) std::lround (w * (double) H / W));
+public:
+    explicit PresetBox (const Palette& p) : pal (p) { setMouseCursor (juce::MouseCursor::PointingHandCursor); }
+    std::function<void()> onClick; juce::String text;
+    void paint (juce::Graphics& g) override
+    {
+        auto r = getLocalBounds().toFloat().reduced (0.5f); g.setColour (juce::Colour (0xff0a0a0c)); g.fillRoundedRectangle (r, 3.0f); g.setColour (isMouseOver() ? col::hover : col::line); g.drawRoundedRectangle (r, 3.0f, 1.0f);
+        g.setColour (col::ink); g.setFont (monoCached (14.0f)); g.drawText (text, 12, 0, getWidth() - 36, getHeight(), juce::Justification::centredLeft, true);
+        juce::Path t; const float cx = (float) getWidth() - 14.0f, cy = (float) getHeight() * 0.5f; t.addTriangle (cx - 3.5f, cy - 2, cx + 3.5f, cy - 2, cx, cy + 3); g.setColour (pal->l); g.fillPath (t);
+    }
+    void mouseUp (const juce::MouseEvent& e) override { if (e.mouseWasClicked() && onClick) onClick(); }
+    void mouseEnter (const juce::MouseEvent&) override { repaint(); }
+    void mouseExit (const juce::MouseEvent&) override { repaint(); }
+private:
+    const Palette& pal;
+};
+
+//==============================================================================
+class Content : public juce::Component
+{
+public:
+    Content (WhiskerScopeEditor& ed, WhiskerScopeProcessor& pr);
+    ~Content() override;
+    void paint (juce::Graphics& g) override;
+    void mouseDown (const juce::MouseEvent&) override { grabKeyboardFocus(); }
+    void mouseDoubleClick (const juce::MouseEvent& e) override;
+    bool keyPressed (const juce::KeyPress& k) override;
+    void setPage (int p);
+    void tickNow() { tick(); }                         // used by the screenshot tool
+    Env& envRef() { return env; }
+    void showSettings(); void showAbout(); void showGuide();
+    void startFrames() { gate.start (settings.eco ? 12 : 30); }
+
+private:
+    class Sugg;
+    WhiskerScopeEditor& editor; WhiskerScopeProcessor& p; APVTS& apvts; Env env; WhiskerScopeProcessor::Settings settings;
+    WsLook look; std::unique_ptr<juce::TooltipWindow> tips; catui::RenderGate gate { *this };
+    std::vector<std::unique_ptr<APVTS::ComboBoxAttachment>> combos; std::vector<std::unique_ptr<APVTS::SliderAttachment>> sliders; std::vector<std::unique_ptr<APVTS::ButtonAttachment>> buttons;
+    juce::OwnedArray<juce::Component> owned;
+
+    // header
+    juce::Path logoPath; MBtn *bPrev = nullptr, *bNext = nullptr, *bSave = nullptr, *bMore = nullptr, *bPanic = nullptr, *bGuide = nullptr, *bSettings = nullptr, *bAbout = nullptr; PresetBox presetBox { env.pal };
+    // rig
+    MKnob *kGain = nullptr, *kScGain = nullptr; Field* fColor = nullptr;
+    // tabs and pages
+    std::unique_ptr<MBtn> tabs[4]; std::unique_ptr<ViewBase> views[4]; std::unique_ptr<Flow> panels[4]; Flow* shapesGroups[3] {};
+    std::unique_ptr<MeterPanel> meters; Field *fMeter = nullptr, *fRms = nullptr; MBtn* bPkReset = nullptr;
+    Modal modal { env.pal };
+    int shownPage = -1; double lastTick = 0; int labelTick = 0; juce::String lastSync; int lastColor = -1; bool lastMuted = false;
+    // shapes
+    Field* fShape = nullptr; MBtn *bCapRef = nullptr, *bCanRef = nullptr, *bCapMine = nullptr, *bCanMine = nullptr, *bRefOn = nullptr; StatusText *stRef = nullptr, *stMine = nullptr, *stAuto = nullptr; Sugg* sugg = nullptr;
+    std::vector<ws::Shape> shapeList; juce::StringArray factoryNames;
+    Flow* scopeFlow = nullptr; juce::Component *hostDur = nullptr, *hostFreq = nullptr, *hostPer = nullptr, *hostDiv = nullptr;
+
+    const wsp::ChoiceDef& cd (const char* id) const { for (auto& c : wsp::choices()) if (std::strcmp (c.id, id) == 0) return c; jassertfalse; return wsp::choices()[0]; }
+    const wsp::NumDef& nd (const char* id) const { for (auto& c : wsp::nums()) if (std::strcmp (c.id, id) == 0) return c; jassertfalse; return wsp::nums()[0]; }
+    const wsp::FlagDef& fd (const char* id) const { for (auto& c : wsp::flags()) if (std::strcmp (c.id, id) == 0) return c; jassertfalse; return wsp::flags()[0]; }
+    Field* mkField (const char* id, const char* lab, int w);
+    MKnob* mkKnob (const char* id, const char* lab, int w = MKnob::kWidth);
+    MBtn* mkToggle (const char* id, const char* lab, int w);
+    MBtn* mkButton (const juce::String& text, int w, const juce::String& tipHead, const juce::String& tip, std::function<void()> fn, MBtn::Kind k = MBtn::Plain);
+    template <class T> T* keep (T* c) { owned.add (c); return c; }
+    void buildHeader(); void buildRig(); void buildPages(); void buildShapes(); void buildMeters();
+    void layoutFixed();
+    void resized() override;
+    void tick();
+    void syncFromProcessor();
+    void updateShapesStatus();
+    void panic();
+    void resetPeaksAll() { env.resetPeaks(); static_cast<SpecView*> (views[0].get())->resetPeaks(); }
+    void refreshShapeList (const juce::String& select = {});
+    void presetMenu(); void saveDialog(); void moreDialog(); void note (const juce::String& s);
+    void copyDialog (const juce::String& text, const juce::String& what);
+    void importDialog (bool preset);
+    void relayoutScope();
+    void applySettings();
+    friend class WhiskerScopeEditor;
+};
+
+// Suggestion line under the Match group.
+class Content::Sugg : public juce::Component
+{
+public:
+    explicit Sugg (Content& c) : owner (c) { setSize (900, 18); setInterceptsMouseClicks (false, false); }
+    void paint (juce::Graphics& g) override
+    {
+        auto& P = owner.p; const auto& V = P.shapes(); const auto& S = *owner.env.pal; const int ch = std::string (P.choiceRaw ("shChan")) == "s" ? 1 : 0; const float* arr = V.eq[ch]; const auto lab = label (15.0f, 500, 0.03f);
+        float x = 0; const float y = 13;
+        auto put = [&] (const juce::String& s, juce::Colour c, const juce::Font& f) { txt (g, s, x, y, c, juce::Justification::left, f); x += textWidth (s, f); };
+        if (! V.hasRefShown) { put (V.hasRef ? "Reference is switched off. Turn it on to get suggestions." : "Pick or capture a reference shape to get suggestions.", col::ink, lab); return; }
+        std::vector<int> idx; for (int k = 0; k < ws::kBands; ++k) { const float a = std::abs (arr[k]), pa = k > 0 ? std::abs (arr[k - 1]) : 0.0f, na = k < ws::kBands - 1 ? std::abs (arr[k + 1]) : 0.0f; if (a >= 1.5f && a >= pa && a >= na) idx.push_back (k); }
+        std::sort (idx.begin(), idx.end(), [&] (int a, int b) { return std::abs (arr[a]) > std::abs (arr[b]); });
+        std::vector<int> pick; for (int i : idx) { bool ok = true; for (int j : pick) if (std::abs (j - i) < 4) ok = false; if (ok && pick.size() < 4) pick.push_back (i); } std::sort (pick.begin(), pick.end());
+        const juce::String name = ch == 0 ? "Mid" : "Side";
+        if (pick.empty()) { put (name + " already close to the reference. No move bigger than 1.5 dB.", col::ink, lab); return; }
+        put (name + " EQ moves: ", col::ink, lab); bool first = true;
+        for (int i : pick)
+        {
+            if (! first) put (juce::String::fromUTF8 (" \xc2\xb7 "), col::ink, lab);
+            first = false; const double f = ws::bandCentreHz (i);
+            put (juce::String (arr[i] > 0 ? "Boost " : "Cut ") + (f >= 1000 ? juce::String (f / 1000.0, 1) + " kHz" : juce::String ((int) std::lround (f)) + " Hz") + " " + (arr[i] > 0 ? "+" : "") + juce::String (arr[i], 1) + " dB", arr[i] > 0 ? S.l : S.r, label (15.0f, 700, 0.03f));
+        }
+    }
+private:
+    Content& owner;
+};
+
+//==============================================================================
+Content::Content (WhiskerScopeEditor& ed, WhiskerScopeProcessor& pr) : editor (ed), p (pr), apvts (pr.apvts), env (pr), settings (WhiskerScopeProcessor::loadSettings())
+{
+    setSize (WhiskerScopeEditor::kDesignW, WhiskerScopeEditor::kDesignH); setWantsKeyboardFocus (true); setOpaque (true);
+    setLookAndFeel (&look); env.st = settings; env.pal.s = &scheme (p.choiceIndex ("color"));
+    buildHeader(); buildRig(); buildPages(); buildMeters();
+    addChildComponent (modal); modal.onClosed = [this] { grabKeyboardFocus(); };
+    tips = std::make_unique<juce::TooltipWindow> (this, 1000); tips->setLookAndFeel (&look);
+    applySettings(); setPage (juce::jlimit (0, 3, p.page)); layoutFixed(); refreshShapeList();
+    gate.onFrame = [this] { tick(); }; startFrames();
 }
 
-WhiskerScopeEditor::~WhiskerScopeEditor() { setLookAndFeel (nullptr); }
+Content::~Content() { gate.stop(); if (tips) tips->setLookAndFeel (nullptr); setLookAndFeel (nullptr); p.setShapesWatched (false); }
+
+void Content::applySettings() { if (tips) tips->setMillisecondsBeforeTipAppears (settings.bubbles ? 1000 : 1000000000); env.st = settings; }
+
+//------------------------------------------------------------------------------
+Field* Content::mkField (const char* id, const char* lab, int w)
+{
+    auto& d = cd (id); juce::StringArray items; for (auto* s : d.labels) items.add (s); const juce::String l = lab ? lab : d.label;
+    auto* f = keep (new Field (l, items)); f->setSize (w > 0 ? w : Field::widthFor (items, l), Field::kHeight); f->setTip (l + "\n" + d.tip);
+    combos.push_back (std::make_unique<APVTS::ComboBoxAttachment> (apvts, id, f->box)); return f;
+}
+MKnob* Content::mkKnob (const char* id, const char* lab, int w)
+{
+    auto& d = nd (id); const juce::String l = lab ? lab : d.label; auto* k = keep (new MKnob (l, d.fmt, env.pal, w));
+    sliders.push_back (std::make_unique<APVTS::SliderAttachment> (apvts, id, *k)); k->setDoubleClickReturnValue (true, d.def); k->setTooltip (l + "\n" + d.tip + " Double-click resets."); return k;
+}
+MBtn* Content::mkToggle (const char* id, const char* lab, int w)
+{
+    auto& d = fd (id); const juce::String l = lab ? lab : d.label; auto* b = keep (new MBtn (l, MBtn::Toggle, env.pal)); b->setSize (w, 30); b->setTooltip (l + "\n" + d.tip);
+    buttons.push_back (std::make_unique<APVTS::ButtonAttachment> (apvts, id, *b)); return b;
+}
+MBtn* Content::mkButton (const juce::String& text, int w, const juce::String& tipHead, const juce::String& tip, std::function<void()> fn, MBtn::Kind k)
+{
+    auto* b = keep (new MBtn (text, k, env.pal)); b->setSize (w > 0 ? w : MBtn::widthFor (text, k), 30); if (tip.isNotEmpty()) b->setTooltip ((tipHead.isNotEmpty() ? tipHead : text) + "\n" + tip); b->onClick = std::move (fn); return b;
+}
+
+void Content::buildHeader()
+{
+    logoPath = juce::Drawable::parseSVGPath ("M4.5 5C10 7 17 11 21 14c3-.5 7-2 11-2s8 1.5 11 2C47 11 55 7 60 5.5L61 24C61 40 48 50 32 58 16 50 3 40 3.7 24z");
+    auto step = [this] (int d) { auto a = p.allPresets(); int i = 0; for (size_t k = 0; k < a.size(); ++k) if (a[k].name == p.presetName) i = (int) k; p.loadPreset (a[(size_t) (((i + d) % (int) a.size() + (int) a.size()) % (int) a.size())].name); };
+    bPrev = mkButton (juce::String::fromUTF8 ("\xe2\x80\xb9"), 28, "Previous preset", "Previous preset.", [step] { step (-1); });
+    bNext = mkButton (juce::String::fromUTF8 ("\xe2\x80\xba"), 29, "Next preset", "Next preset.", [step] { step (1); });
+    bSave = mkButton ("Save", 62, "Save preset", "Save the current settings as your own preset (stays on this device).", [this] { saveDialog(); });
+    bMore = mkButton (juce::String::fromUTF8 ("\xe2\x8b\xaf"), 37, "More", "Rename, delete, export or import presets.", [this] { moreDialog(); });
+    bPanic = mkButton ("Panic", 69, "Panic", "PANIC: mutes the output at once, cancels any capture and turns the matching EQ off. Press again to unmute. Shortcut: P.", [this] { panic(); }, MBtn::Panic);
+    bGuide = mkButton ("Guide", 68, "Guide", "Quick guide: what each view and control does.", [this] { showGuide(); });
+    bSettings = mkButton ("Settings", 98, "Settings", "Info bubbles, colours, power saving, meter warning level, window size.", [this] { showSettings(); });
+    bAbout = mkButton ("About & Support", 166, "About & Support", "About Studio 87, privacy, installing, and ways to support the project.", [this] { showAbout(); });
+    for (auto* b : { bPrev, bNext, bSave, bMore, bPanic, bGuide, bSettings, bAbout }) addAndMakeVisible (b);
+    presetBox.setTooltip ("Presets\nOpen the preset list: factory presets and your own."); presetBox.onClick = [this] { presetMenu(); }; addAndMakeVisible (presetBox);
+}
+
+void Content::buildRig()
+{
+    kGain = mkKnob ("gain", "Input gain"); kScGain = mkKnob ("scGain", "SC gain"); fColor = mkField ("color", nullptr, 144);
+    addAndMakeVisible (kGain); addAndMakeVisible (kScGain); addAndMakeVisible (fColor);
+}
+
+void Content::buildPages()
+{
+    const auto flowPanel = [&] (int i, int h) { panels[i] = std::make_unique<Flow> (col::panel2, 11, 9, 11, 9, 14, 8); panels[i]->setSize (1026, h); addChildComponent (*panels[i]); return panels[i].get(); };
+    { auto* f = flowPanel (0, 118);
+      f->add (mkField ("ana", nullptr, 101)); f->add (mkField ("fft", nullptr, 77)); f->add (mkField ("speed", nullptr, 87)); f->add (mkField ("range", nullptr, 83)); f->add (mkField ("slope", nullptr, 102));
+      f->add (mkField ("pkSpd", nullptr, 95)); f->add (mkField ("pkN", "Peak labels", 96)); f->add (mkField ("maskDb", nullptr, 118)); f->add (mkField ("bands", nullptr, 104)); f->add (mkField ("scale", nullptr, 77));
+      f->add (mkToggle ("style", nullptr, 56)); f->add (mkToggle ("wf", nullptr, 111)); f->add (mkToggle ("rot", nullptr, 82)); f->add (mkToggle ("hold", nullptr, 112));
+      f->add (mkButton ("Peak reset", 118, "Peak reset", "Clears the held peaks and the clip light. Shortcut: R.", [this] { resetPeaksAll(); }));
+      f->add (mkToggle ("fzSpec", nullptr, 81)); }
+    { auto* f = flowPanel (1, 92); scopeFlow = f;
+      f->add (mkField ("chan", nullptr, 102)); f->add (mkField ("sync", nullptr, 105));
+      f->add (hostDur = mkKnob ("dur", nullptr)); f->add (hostFreq = mkKnob ("freq", nullptr)); f->add (hostPer = mkKnob ("periods", nullptr)); f->add (hostDiv = mkField ("div", nullptr, 104));
+      f->add (mkKnob ("trig", nullptr)); f->add (mkField ("pkSpd", nullptr, 95)); f->add (mkField ("pkN", nullptr, 86)); f->add (mkToggle ("trans", nullptr, 118)); f->add (mkToggle ("fzScope", nullptr, 82)); }
+    { auto* f = flowPanel (2, 92); f->add (mkKnob ("pers", nullptr)); f->add (mkKnob ("zoom", nullptr)); f->add (mkToggle ("fzSt", nullptr, 82)); }
+    buildShapes();
+    views[0] = std::make_unique<SpecView> (env); views[1] = std::make_unique<ScopeView> (env); views[2] = std::make_unique<StereoView> (env); views[3] = std::make_unique<ShapesView> (env);
+    static const char* const names[4] = { "Spectrum", "Scope", "Stereo field", "Shapes" };
+    static const char* const tp[4] = { "Spectrum analyser with optional waterfall. Shortcut: 1.", "Waveform scope. Shortcut: 2.", "Stereo field: goniometer, phase correlation and mono check. Shortcut: 3.", "Freeze the spectrum shape of a song or lead, save it, and see the EQ that moves your sound toward it. Shortcut: 4." };
+    for (int i = 0; i < 4; ++i)
+    {
+        addChildComponent (*views[i]); tabs[i] = std::make_unique<MBtn> (names[i], MBtn::Tab, env.pal); tabs[i]->setTooltip (juce::String (names[i]) + "\n" + tp[i]); tabs[i]->setSize (252, 37);
+        tabs[i]->onClick = [this, i] { setPage (i); }; addAndMakeVisible (*tabs[i]);
+    }
+}
+
+void Content::buildMeters()
+{
+    meters = std::make_unique<MeterPanel> (env); addAndMakeVisible (*meters); meters->setInterceptsMouseClicks (false, true);
+    fMeter = mkField ("mmode", nullptr, 213); fRms = mkField ("rms", nullptr, 213); meters->addAndMakeVisible (fMeter); meters->addAndMakeVisible (fRms);
+    bPkReset = mkButton ("Peak reset", 213, "Peak reset", "Clears held peaks, the clip light and the crest figure. Shortcut: R.", [this] { resetPeaksAll(); }); meters->addAndMakeVisible (bPkReset);
+}
+
+void Content::buildShapes()
+{
+    panels[3] = std::make_unique<Flow> (col::panel2, 0, 0, 0, 0, 0, 0); panels[3]->setSize (1026, 403); addChildComponent (*panels[3]);
+    auto group = [&] (int i, const char* num, const char* title, const char* sub) { auto* g = keep (new Flow (juce::Colour (0xff121317), 10, 8, 10, 9, 10, 6)); shapesGroups[i] = g; panels[3]->addAndMakeVisible (g); g->add (keep (new GroupHead (num, title, sub, env.pal)), true); return g; };
+    auto* g1 = group (0, "1", "Reference", "the sound you want yours to sound like"); auto* g2 = group (1, "2", "Mine", "your own sound; skip this and the live sound is used"); auto* g3 = group (2, "3", "Match", "the EQ that moves mine toward the reference, with level control");
+    bCapRef = mkButton ("Capture reference", 188, "Capture reference", "Play the song or lead you want to sound like, press this, let it play, then press again. Its average spectrum shape and loudness are frozen as the reference.", [this] { if (p.shapes().capturing) { p.stopCapture(); note (p.takeNote()); } else p.startCapture (true); }); g1->add (bCapRef);
+    bCanRef = mkButton ("Cancel", 70, "Cancel capture", "Throw the running capture away and keep what you had before.", [this] { p.cancelCapture(); }); g1->add (bCanRef); bCanRef->setVisible (false);
+    { juce::StringArray none; fShape = keep (new Field ("Or pick a saved shape", none)); fShape->setSize (185, Field::kHeight); fShape->setTip ("Shape library\nStarting-point shapes plus the ones you saved."); g1->add (fShape); }
+    g1->add (mkButton ("Use as reference", 172, "Use as reference", "Loads the chosen shape as the target.", [this] { const int id = fShape->box.getSelectedId() - 1000; if (id >= 0 && id < (int) shapeList.size()) p.useAsReference (shapeList[(size_t) id]); }));
+    g1->add (mkButton ("Save as...", 101, "Save reference as", "Keeps the current reference (shape and loudness) in your shape library on this device.", [this]
+    {
+        if (! p.shapes().hasRef) { note ("There is no reference yet. Capture one or pick a shape first."); return; }
+        const juce::String cur = juce::String (p.shapes().ref.name); modal.begin ("Save shape"); modal.para ("Name for this shape:"); auto* in = modal.input (cur == "Captured reference" ? juce::String ("My shape") : cur, 40, false);
+        modal.show ({ { "Cancel" }, { "Save", true, [this, in] { auto n = WhiskerScopeProcessor::cleanName (in->getText()); if (n.isEmpty()) return false; auto s = p.shapes().ref; s.name = n.toStdString(); if (! p.saveUserShape (s)) { juce::MessageManager::callAsync ([this] { note ("The shape could not be saved. Check that your user folder is writable."); }); return true; } p.renameReference (n); refreshShapeList (n); return true; } } });
+    }));
+    g1->add (mkButton ("Manage...", 101, "Manage shapes", "Delete a saved shape, export the reference as text, or import a shape you were sent.", [this]
+    {
+        const int id = fShape->box.getSelectedId() - 1000; const bool valid = id >= 0 && id < (int) shapeList.size(); const juce::String nm = valid ? juce::String (shapeList[(size_t) id].name) : juce::String(); const bool user = valid && ! factoryNames.contains (nm);
+        modal.begin ("Shapes"); modal.para ("Selected in the library: **" + nm + "**" + (user ? "" : " (starting points cannot be deleted)"));
+        modal.show ({ { "Delete selected", false, [this, user, nm] { if (! user) return false; p.deleteUserShape (nm); refreshShapeList(); return true; } },
+                      { "Export reference", false, [this] { if (! p.shapes().hasRef) return false; juce::MessageManager::callAsync ([this] { copyDialog (WhiskerScopeProcessor::shapeToText (p.shapes().ref), "The shape"); }); return true; } },
+                      { "Import", false, [this] { juce::MessageManager::callAsync ([this] { importDialog (false); }); return true; } }, { "Close" } });
+    }));
+    bRefOn = mkToggle ("shRefOn", nullptr, 140); g1->add (bRefOn);
+    g1->add (mkButton ("Rename...", 100, "Rename reference", "Gives the current reference a name of your choice.", [this]
+    {
+        if (! p.shapes().hasRef) { note ("There is no reference to rename."); return; }
+        modal.begin ("Rename reference"); modal.para ("New name:"); auto* in = modal.input (juce::String (p.shapes().ref.name), 40, false);
+        modal.show ({ { "Cancel" }, { "Rename", true, [this, in] { auto n = WhiskerScopeProcessor::cleanName (in->getText()); if (n.isEmpty()) return false; p.renameReference (n); return true; } } });
+    }));
+    g1->add (mkButton ("Clear reference", 169, "Clear reference", "Removes the reference. Mine, the EQ settings and everything else stay. Save it first (Save as) if you want to keep it.", [this]
+    {
+        if (! p.shapes().hasRef) return; modal.begin ("Clear reference?"); modal.para ("The reference **" + juce::String (p.shapes().ref.name) + "** will be removed from the plugin. A saved copy in your library stays.");
+        modal.show ({ { "Cancel" }, { "Clear", true, [this] { p.clearReference(); return true; } } });
+    }));
+    g1->add (mkField ("shRefTilt", "Ref tilt", 98)); stRef = keep (new StatusText (env.pal)); g1->add (stRef, true);
+    bCapMine = mkButton ("Capture mine", 137, "Capture mine", "Play your own sound, press this, let it play, then press again. Its shape is frozen so you can compare while you move on.", [this] { if (p.shapes().capturing) { p.stopCapture(); note (p.takeNote()); } else p.startCapture (false); }); g2->add (bCapMine);
+    bCanMine = mkButton ("Cancel", 70, "Cancel capture", "Throw the running capture away and keep what you had before.", [this] { p.cancelCapture(); }); g2->add (bCanMine); bCanMine->setVisible (false);
+    g2->add (mkButton ("Clear mine", 111, "Clear mine", "Forget the captured shape of your sound and compare the live sound again.", [this] { p.clearMine(); }));
+    g2->add (mkField ("shLen", nullptr, 128)); stMine = keep (new StatusText (env.pal)); g2->add (stMine, true);
+    g3->add (mkField ("shChan", nullptr, 67)); g3->add (mkField ("shSmooth", nullptr, 110)); g3->add (mkKnob ("shStrength", nullptr, 76)); g3->add (mkKnob ("shLimit", nullptr, 76)); g3->add (mkToggle ("shHear", nullptr, 72));
+    { auto* k = mkKnob ("gain", "Input", 76); k->setTooltip ("Input\nLevel into the plugin (same knob as the Input gain at the top). Double-click resets."); g3->add (k); }
+    g3->add (mkKnob ("shOut", nullptr, 76)); g3->add (mkField ("shAuto", nullptr, 153)); stAuto = keep (new StatusText (env.pal)); stAuto->setSize (190, 16); g3->add (stAuto);
+    g3->add (mkButton ("Copy EQ points", 150, "Copy EQ points", "Copies the matching EQ as a list of bells (frequency, gain, Q) for Mid and Side, to type into any EQ.", [this]
+    {
+        const auto& V = p.shapes(); juce::StringArray lines; const double fs = p.sampleRateNow.load();
+        for (int ch = 0; ch < 2; ++ch)
+        {
+            float gains[ws::kBells]; ws::designBells (V.eq[ch], fs, gains); lines.add (juce::String (ch == 0 ? "Mid" : "Side") + " EQ (bells, Q " + juce::String (ws::kBellQ, 1) + "):");
+            bool any = false; for (int i = 0; i < ws::kBells; ++i) if (std::abs (gains[i]) >= 0.1f) { any = true; const double f = ws::bellHz (i); lines.add ("  " + (f >= 1000 ? juce::String (f / 1000.0, 2) + " kHz" : juce::String (f, 0) + " Hz") + ": " + (gains[i] >= 0 ? "+" : "") + juce::String (gains[i], 1) + " dB"); }
+            if (! any) lines.add ("  no moves");
+        }
+        copyDialog (lines.joinIntoString ("\n"), "The EQ points");
+    }));
+    sugg = keep (new Sugg (*this)); g3->add (sugg, true);
+}
+
+//------------------------------------------------------------------------------
+void Content::layoutFixed()
+{
+    bPrev->setBounds (390, 17, 28, 30); presetBox.setBounds (425, 16, 306, 32); bNext->setBounds (738, 17, 29, 30); bSave->setBounds (774, 17, 62, 30); bMore->setBounds (842, 17, 37, 30);
+    bPanic->setBounds (896, 17, 69, 30); bGuide->setBounds (972, 17, 68, 30); bSettings->setBounds (1047, 17, 98, 30); bAbout->setBounds (1150, 17, 166, 30);
+    kGain->setTopLeftPosition (834, 83); kScGain->setTopLeftPosition (926, 83); fColor->setTopLeftPosition (1018, 99);
+    for (int i = 0; i < 4; ++i) tabs[i]->setTopLeftPosition (44 + i * 258, 202);
+    static const int panelH[4] = { 118, 92, 92, 403 };
+    for (int i = 0; i < 4; ++i) { const int top = 874 - panelH[i]; panels[i]->setBounds (44, top, 1026, panelH[i]); views[i]->setBounds (44, 247, 1026, top - 8 - 247); }
+    shapesGroups[0]->setBounds (11, 10, 563, 196); shapesGroups[1]->setBounds (583, 10, 431, 196); shapesGroups[2]->setBounds (11, 216, 1003, 178);
+    for (int i = 0; i < 3; ++i) shapesGroups[i]->relayout();
+    for (int i = 0; i < 3; ++i) panels[i]->relayout();
+    meters->setBounds (1080, 202, 236, 672); fMeter->setTopLeftPosition (11, 400); fRms->setTopLeftPosition (11, 448); bPkReset->setTopLeftPosition (11, 501);
+    modal.setBounds (getLocalBounds());
+    relayoutScope();
+}
+
+void Content::resized() { if (meters != nullptr) layoutFixed(); }
+
+void Content::relayoutScope()
+{
+    const juce::String s (p.choiceRaw ("sync"));
+    hostDur->setVisible (s == "free" || s == "trig"); hostFreq->setVisible (s == "freq"); hostPer->setVisible (s == "freq" || s == "pitch"); hostDiv->setVisible (s == "beat");
+    scopeFlow->relayout(); lastSync = s;
+}
+
+//------------------------------------------------------------------------------
+void Content::paint (juce::Graphics& g)
+{
+    const int W = getWidth(), H = getHeight(); g.fillAll (juce::Colours::black);
+    { g.saveState(); g.reduceClipRegion (30, 0, W - 60, H); g.setColour (col::panel); g.fillRect (30, 0, W - 60, H);
+      g.addTransform (juce::AffineTransform::scale (1.0f, 1.35f, 680.0f, 0.0f)); juce::ColourGradient grad (juce::Colour (0xff1e1f23), 680.0f, 0.0f, col::panel, 680.0f, 680.0f * 0.6f, false); g.setGradientFill (grad); g.fillRect (30, 0, W - 60, 700); g.restoreState(); }
+    drawWoodCheeks (g, getLocalBounds(), 30);
+    { juce::Path lp (logoPath); lp.applyTransform (juce::AffineTransform::scale (38.0f / 64.0f).translated (44, 14)); g.setColour (juce::Colour (0xfff4f5f7)); g.fillPath (lp);
+      juce::Path eyes = juce::Drawable::parseSVGPath ("M11.3 25.8C20 26 25 31 27 36.5 21 37.5 15 36 12.5 31zM52.7 25.8C44 26 39 31 37 36.5 43 37.5 49 36 51.5 31z"); eyes.applyTransform (juce::AffineTransform::scale (38.0f / 64.0f).translated (44, 14)); g.setColour (col::panel); g.fillPath (eyes); }
+    txt (g, "WHISKER SCOPE", 92, 36, col::ink, juce::Justification::left, label (28.0f, 700, 0.12f));
+    txt (g, "STUDIO 87", 92, 52, env.pal->acc, juce::Justification::left, label (12.0f, 500, 0.3f));
+    g.setColour (col::line); g.fillRect (44, 64, 1272, 1);
+    { auto r = juce::Rectangle<float> (44, 75, 1272, 117).reduced (0.5f); g.setColour (col::panel2); g.fillRoundedRectangle (r, 4.0f); g.setColour (col::line); g.drawRoundedRectangle (r, 4.0f, 1.0f); }
+    txt (g, "INPUT", 55, 126, col::dim, juce::Justification::left, label (12.0f, 500, 0.2f));
+    const bool scOn = p.scEnabled.load(), scSeen = p.scSeen.load();
+    txt (g, "SIDECHAIN (LAYER B)", 177, 109, col::dim, juce::Justification::left, label (11.0f, 500, 0.18f));
+    { g.setColour ((scSeen ? col::cb : col::dim).withAlpha (scSeen ? 1.0f : 0.5f)); g.fillEllipse (178, 122, 10, 10);
+      txt (g, scSeen ? "Receiving sound: drawn in yellow on the displays" : scOn ? "Connected, waiting for sound" : "Not connected. Route a track to the sidechain input of this plugin in your DAW.", 196, 132, scSeen ? col::cb : col::dim, juce::Justification::left, label (14.0f, 500, 0.03f)); }
+    if (p.muted.load()) txt (g, "PANIC: output muted. Press Panic again to unmute.", 177, 160, juce::Colour (0xffff4f8f), juce::Justification::left, label (14.0f, 700, 0.06f));
+    mtxt (g, "BPM " + (p.hostBpm.load() > 1 ? juce::String ((int) std::lround (p.hostBpm.load())) : juce::String ("-")), 55, 180, env.pal->acc, juce::Justification::left, 13);
+    txt (g, "Reads the audio of this track. Sound passes unchanged unless Input gain, the matching EQ or Output gain is used.", 1305, 180, col::dim, juce::Justification::right, label (12.0f, 500, 0.04f));
+    g.setColour (col::line); g.fillRect (44, 886, 1272, 1);
+    { const auto f = label (12.0f, 500, 0.16f); txt (g, "STUDIO 87", 44, 906, col::ink, juce::Justification::left, f); const float w = textWidth ("STUDIO 87", f);
+      txt (g, juce::String::fromUTF8 (" \xc2\xb7 WHISKER SCOPE V") + juce::String (WS_VERSION).upToLastOccurrenceOf (".", false, false), 44 + w, 906, col::dim, juce::Justification::left, f);
+      txt (g, "WINDOW " + juce::String ((int) std::lround (editor.scaleNow() * 100.0)) + " %", 680, 906, col::dim, juce::Justification::horizontallyCentred, f); }
+}
+
+void Content::mouseDoubleClick (const juce::MouseEvent& e)
+{
+    const auto q = e.getPosition();
+    if (q.x < 30 || q.x > getWidth() - 30) editor.resetSize (false);
+    else if (q.y >= 890 && q.x > 600 && q.x < 760) editor.resetSize (true);
+}
+
+bool Content::keyPressed (const juce::KeyPress& k)
+{
+    if (modal.isOpen() || k.getModifiers().isAnyModifierKeyDown()) return false;
+    const auto c = juce::CharacterFunctions::toLowerCase (k.getTextCharacter());
+    if (c == 'p') { panic(); return true; }
+    if (c == 'r') { resetPeaksAll(); return true; }
+    if (c >= '1' && c <= '4') { setPage ((int) (c - '1')); return true; }
+    if (c == 'f') { static const char* const ids[3] = { "fzSpec", "fzScope", "fzSt" }; const int pg = p.page; const int idx = pg == 0 ? 0 : pg == 1 ? 1 : pg == 2 ? 2 : -1; if (idx >= 0) p.setParam (ids[idx], p.param (ids[idx]) > 0.5f ? 0.0f : 1.0f); return true; }
+    return false;
+}
+
+void Content::setPage (int i)
+{
+    i = juce::jlimit (0, 3, i); p.page = i; if (i == shownPage) return; shownPage = i; p.setShapesWatched (i == 3);
+    for (int k = 0; k < 4; ++k) { views[k]->setVisible (k == i); panels[k]->setVisible (k == i); tabs[k]->setLit (k == i); }
+    if (auto* s = dynamic_cast<StereoView*> (views[2].get())) s->clearTrail();
+    if (auto* s = dynamic_cast<SpecView*> (views[0].get())) s->clearHistory();
+    repaint();
+}
+
+void Content::panic()
+{
+    const bool now = ! p.muted.load(); p.muted.store (now);
+    if (now) { p.cancelCapture(); if (p.param ("shHear") > 0.5f) p.setParam ("shHear", 0.0f); resetPeaksAll(); }
+    bPanic->setLit (now); lastMuted = now; repaint (0, 75, getWidth(), 117);
+}
+
+void Content::note (const juce::String& s)
+{
+    if (s.isEmpty()) return; modal.begin ("Note"); modal.para (s); modal.show ({ { "Close" } });
+}
+
+void Content::copyDialog (const juce::String& text, const juce::String& what)
+{
+    juce::SystemClipboard::copyTextToClipboard (text);
+    modal.begin ("Copied"); modal.para (what + " copied to the clipboard."); modal.show ({ { "Close" } });
+}
+
+void Content::importDialog (bool preset)
+{
+    modal.begin (preset ? "Import preset" : "Import shape"); modal.para (preset ? "Paste exported preset text. Anything that does not look like a preset is rejected." : "Paste exported shape text. Anything that does not look like a shape is rejected.");
+    auto* ta = modal.input ({}, 0, true, false, preset ? "Paste exported preset text" : "Paste the shape text here");
+    auto bad = [ta] { ta->setColour (juce::TextEditor::outlineColourId, juce::Colour (0xffFF1383)); ta->setColour (juce::TextEditor::focusedOutlineColourId, juce::Colour (0xffFF1383)); ta->repaint(); return false; };
+    modal.show ({ { "Cancel" }, { "Import", true, [this, ta, preset, bad]
+    {
+        if (preset) { juce::String nn; if (! p.importPresetText (ta->getText(), nn)) return bad(); p.loadPreset (nn); return true; }
+        ws::Shape s; if (! WhiskerScopeProcessor::shapeFromText (ta->getText(), s)) return bad();
+        p.useAsReference (s); return true;
+    } } });
+}
+
+void Content::presetMenu()
+{
+    juce::PopupMenu m; auto all = p.allPresets(); m.addSectionHeader ("Factory");
+    for (size_t i = 0; i < all.size(); ++i) if (all[i].factory) m.addItem ((int) i + 1, all[i].name, true, all[i].name == p.presetName);
+    bool anyUser = false; for (size_t i = 0; i < all.size(); ++i) if (! all[i].factory) { if (! anyUser) { m.addSectionHeader ("Mine"); anyUser = true; } m.addItem ((int) i + 1, all[i].name, true, all[i].name == p.presetName); }
+    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&presetBox).withMinimumWidth (presetBox.getWidth()), [this, all] (int r) { if (r > 0 && r <= (int) all.size()) p.loadPreset (all[(size_t) (r - 1)].name); });
+}
+
+void Content::saveDialog()
+{
+    const bool mine = p.userPresetExists (p.presetName);
+    modal.begin ("Save preset"); modal.para ("Name for this preset. It is kept on this device."); auto* in = modal.input (mine ? p.presetName : juce::String ("My preset"), 40, false);
+    modal.show ({ { "Cancel" }, { "Save", true, [this, in]
+    {
+        const auto n = WhiskerScopeProcessor::cleanName (in->getText()); if (n.isEmpty()) return false;
+        if (p.userPresetExists (n)) { juce::MessageManager::callAsync ([this, n] { modal.begin ("Overwrite preset?"); modal.para ("A preset called **" + n + "** already exists. Replace it?"); modal.show ({ { "Cancel" }, { "Replace", true, [this, n] { p.saveUserPreset (n); return true; } } }); }); return true; }
+        if (! p.saveUserPreset (n)) juce::MessageManager::callAsync ([this] { note ("The preset could not be saved. Check that your user folder is writable."); });
+        return true;
+    } } });
+}
+
+void Content::moreDialog()
+{
+    const bool mine = p.userPresetExists (p.presetName); const juce::String cur = p.presetName;
+    modal.begin ("Presets"); modal.para ("Current: **" + cur + "**" + (mine ? "" : " (factory presets cannot be renamed or deleted)"));
+    modal.show ({ { "Rename", false, [this, mine, cur] { if (! mine) return false; juce::MessageManager::callAsync ([this, cur] { modal.begin ("Rename preset"); auto* in = modal.input (cur, 40, false); modal.show ({ { "Cancel" }, { "Rename", true, [this, in, cur] { const auto n = WhiskerScopeProcessor::cleanName (in->getText()); if (n.isEmpty() || p.userPresetExists (n)) return false; p.renameUserPreset (cur, n); return true; } } }); }); return true; } },
+                  { "Delete", false, [this, mine, cur] { if (! mine) return false; p.deleteUserPreset (cur); return true; } },
+                  { "Export", false, [this, cur] { juce::MessageManager::callAsync ([this, cur] { copyDialog (p.presetToText (cur), "The preset"); }); return true; } },
+                  { "Import", false, [this] { juce::MessageManager::callAsync ([this] { importDialog (true); }); return true; } }, { "Close" } });
+}
+
+//------------------------------------------------------------------------------
+void Content::refreshShapeList (const juce::String& select)
+{
+    auto& box = fShape->box; const int curId = box.getSelectedId();
+    const juce::String keepName = select.isNotEmpty() ? select : (curId >= 1000 && curId - 1000 < (int) shapeList.size() ? juce::String (shapeList[(size_t) (curId - 1000)].name) : juce::String());
+    shapeList = p.factoryShapes(); const size_t nf = shapeList.size(); for (auto& s : p.userShapes()) shapeList.push_back (s);
+    box.clear (juce::dontSendNotification); box.addSectionHeading ("Starting points (made by us, not measured from a song)");
+    for (size_t i = 0; i < nf; ++i) box.addItem (juce::String (shapeList[i].name), 1000 + (int) i);
+    if (shapeList.size() > nf) { box.addSectionHeading ("My shapes"); for (size_t i = nf; i < shapeList.size(); ++i) box.addItem (juce::String (shapeList[i].name), 1000 + (int) i); }
+    int sel = 1000; if (keepName.isNotEmpty()) for (size_t i = 0; i < shapeList.size(); ++i) if (juce::String (shapeList[i].name) == keepName) sel = 1000 + (int) i;
+    box.setSelectedId (sel, juce::dontSendNotification);
+    factoryNames.clear(); for (size_t i = 0; i < nf; ++i) factoryNames.add (juce::String (shapeList[i].name));
+}
+
+void Content::updateShapesStatus()
+{
+    const auto& V = p.shapes(); const bool refOn = p.param ("shRefOn") > 0.5f; const bool lufsRef = V.hasRef && V.ref.hasLufs();
+    stRef->setText ("Reference: " + (V.hasRef ? juce::String (V.ref.name) + (refOn ? "" : " [OFF]") + (lufsRef ? "  " + juce::String (V.ref.lufs, 1) + " LUFS" : "  (no loudness stored)") : juce::String ("none yet")));
+    stMine->setText ("Mine: " + (V.hasMine ? "captured" + (V.mine.hasLufs() ? "  " + juce::String (V.mine.lufs, 1) + " LUFS" : juce::String()) : V.hasLive ? juce::String ("live (following the sound)") : juce::String ("waiting for sound")));
+    const juce::String mode (p.choiceRaw ("shAuto")); const float ad = p.autoDb.load();
+    stAuto->setText (mode == "off" ? juce::String ("Auto level off") : (mode == "ref" && ! lufsRef) ? juce::String ("Auto: no ref loudness") : "Auto gain " + juce::String (ad >= 0 ? "+" : "") + juce::String (ad, 1) + " dB" + (p.autoHeld.load() ? ", held" : ""));
+    const bool capRef = V.capturing && V.captureIsRef, capMine = V.capturing && ! V.captureIsRef;
+    bCapRef->setButtonText (capRef ? "Stop and keep" : "Capture reference"); bCapRef->setLit (capRef); bCapRef->setEnabled (! capMine);
+    bCapMine->setButtonText (capMine ? "Stop and keep" : "Capture mine"); bCapMine->setLit (capMine); bCapMine->setEnabled (! capRef);
+    if (bCanRef->isVisible() != capRef) { bCanRef->setVisible (capRef); shapesGroups[0]->relayout(); }
+    if (bCanMine->isVisible() != capMine) { bCanMine->setVisible (capMine); shapesGroups[1]->relayout(); }
+    if (! V.capturing) { const auto n = p.takeNote(); if (n.isNotEmpty()) note (n); }
+    sugg->repaint();
+}
+
+void Content::syncFromProcessor()
+{
+    if (p.page != shownPage) setPage (p.page);
+    const int c = p.choiceIndex ("color");
+    if (c != lastColor) { lastColor = c; env.pal.s = &scheme (c); static_cast<SpecView*> (views[0].get())->clearHistory(); repaint(); for (auto* k : { kGain, kScGain }) k->repaint(); }
+    if (juce::String (p.choiceRaw ("sync")) != lastSync) relayoutScope();
+    if (p.muted.load() != lastMuted) { lastMuted = p.muted.load(); bPanic->setLit (lastMuted); repaint (0, 75, getWidth(), 117); }
+    if (labelTick++ % 8 == 0)
+    {
+        const bool dirty = juce::JSON::toString (p.currentState(), true) != p.presetBaseJson; const juce::String t = p.presetName + (dirty ? " *" : ""); if (t != presetBox.text) { presetBox.text = t; presetBox.repaint(); }
+        repaint (44, 75, 1272, 117);
+    }
+}
+
+void Content::tick()
+{
+    const double now = nowMs(); const float dt = (float) juce::jlimit (0.005, 0.2, (now - (lastTick > 0 ? lastTick : now - 33)) / 1000.0); lastTick = now;
+    env.update (dt); syncFromProcessor();
+    const int pg = juce::jlimit (0, 3, p.page); views[pg]->update (dt); views[pg]->repaint(); meters->repaint();
+    if (pg == 3) updateShapesStatus();
+}
+
+//------------------------------------------------------------------------------
+void Content::showSettings()
+{
+    struct RowLabel : juce::Component, juce::SettableTooltipClient { explicit RowLabel (const juce::String& t) : text (t) {} void paint (juce::Graphics& g) override { txt (g, text, 0, 20, juce::Colour (0xffd6d8de), juce::Justification::left, label (15.0f, 500, 0.02f)); } juce::String text; };
+    struct Body : juce::Component
+    {
+        explicit Body (Content& c) : owner (c)
+        {
+            auto addRow = [this] (const juce::String& lab, juce::Component* ctl, const juce::String& tip)
+            { auto* l = new RowLabel (lab); l->setTooltip (lab + "\n" + tip); labels.add (l); addAndMakeVisible (l); if (auto* tc = dynamic_cast<juce::SettableTooltipClient*> (ctl)) tc->setTooltip (lab + "\n" + tip); addAndMakeVisible (ctl); ctls.add (ctl); };
+            auto& S = owner.settings; auto* b1 = new MBtn (S.bubbles ? "On" : "Off", MBtn::Plain, owner.env.pal); b1->setSize (64, 30); b1->setLit (S.bubbles);
+            b1->onClick = [this, b1] { owner.settings.bubbles = ! owner.settings.bubbles; b1->setButtonText (owner.settings.bubbles ? "On" : "Off"); b1->setLit (owner.settings.bubbles); owner.applySettings(); WhiskerScopeProcessor::saveSettings (owner.settings); };
+            addRow ("Info bubbles", b1, "The small help notes that appear after hovering a control for a second."); own.add (b1);
+            auto* b2 = new MBtn (S.eco ? "On" : "Off", MBtn::Plain, owner.env.pal); b2->setSize (64, 30); b2->setLit (S.eco);
+            b2->onClick = [this, b2] { owner.settings.eco = ! owner.settings.eco; b2->setButtonText (owner.settings.eco ? "On" : "Off"); b2->setLit (owner.settings.eco); owner.startFrames(); WhiskerScopeProcessor::saveSettings (owner.settings); };
+            addRow ("Power saving", b2, "Draws about 12 pictures a second instead of 30. Lighter on the computer. Sound and measuring are not affected."); own.add (b2);
+            auto* cb = new juce::ComboBox(); for (auto* s : wsp::choices()[0].labels) cb->addItem (s, cb->getNumItems() + 1); cb->setSize (160, 30); cb->setSelectedItemIndex (owner.p.choiceIndex ("color"), juce::dontSendNotification);
+            cb->onChange = [this, cb] { owner.p.setParam ("color", (float) cb->getSelectedItemIndex()); }; addRow ("Colours", cb, "Colour scheme for all displays."); own.add (cb);
+            auto* wr = new juce::Component(); wr->setSize (190, 30); winVal = new juce::Label(); winVal->setFont (monoCached (14.0f)); winVal->setJustificationType (juce::Justification::centred); winVal->setColour (juce::Label::textColourId, col::ink); wr->addAndMakeVisible (winVal); winVal->setBounds (34, 0, 62, 30);
+            auto mk = [&] (const juce::String& t, int x, int w, std::function<void()> fn) { auto* b = new MBtn (t, MBtn::Plain, owner.env.pal); b->setBounds (x, 0, w, 30); b->onClick = std::move (fn); wr->addAndMakeVisible (b); wrBtns.add (b); };
+            mk ("-", 0, 30, [this] { owner.editor.applyWidth ((int) std::lround (owner.editor.getWidth() / 1.1)); owner.editor.saveScale(); refreshWin(); });
+            mk ("+", 98, 30, [this] { owner.editor.applyWidth ((int) std::lround (owner.editor.getWidth() * 1.1)); owner.editor.saveScale(); refreshWin(); });
+            mk ("100 %", 132, 58, [this] { owner.editor.resetSize (true); owner.editor.saveScale(); refreshWin(); });
+            addRow ("Window size", wr, "Same as dragging any edge or corner of the plugin. The shape of the window never changes."); own.add (wr); refreshWin();
+            auto* wl = new juce::ComboBox(); for (int v : { -18, -12, -9, -6 }) wl->addItem (juce::String (v) + " dB", -v); wl->setSize (160, 30); wl->setSelectedId (-S.warnDb, juce::dontSendNotification);
+            wl->onChange = [this, wl] { owner.settings.warnDb = -wl->getSelectedId(); owner.env.st = owner.settings; WhiskerScopeProcessor::saveSettings (owner.settings); };
+            addRow ("Meter warning from", wl, "Level bars are blue below this, purple above it (warning) and pink near 0 dB (clipping)."); own.add (wl);
+            setSize (500, ctls.size() * 40 + 4);
+        }
+        void resized() override { int y = 0; for (int i = 0; i < ctls.size(); ++i) { labels[i]->setBounds (0, y, 220, 30); ctls[i]->setTopLeftPosition (getWidth() - ctls[i]->getWidth(), y); y += 40; } }
+        void refreshWin() { winVal->setText (juce::String ((int) std::lround (owner.editor.scaleNow() * 100.0)) + " %", juce::dontSendNotification); }
+        Content& owner; juce::OwnedArray<RowLabel> labels; juce::Array<juce::Component*> ctls; juce::OwnedArray<juce::Component> own; juce::OwnedArray<MBtn> wrBtns; juce::Label* winVal = nullptr;
+    };
+    modal.begin ("Settings"); modal.custom (new Body (*this)); modal.para ("Settings and presets are kept in your user data folder (Studio 87 / Whisker Scope). Nothing is sent anywhere."); modal.show ({ { "Close" } });
+}
+
+void Content::showAbout()
+{
+    modal.begin ("About"); modal.head ("Whisker Scope");
+    modal.para ("A scope, spectrum analyser, stereo field and spectrum-shape tool for music makers. By **Studio 87**. It reads the audio of your track, shows it, and can apply a matching EQ on the Shapes page.");
+    modal.head ("Free, open and private"); modal.bullets ({ "Free and open source (AGPL-3.0-or-later).", "Collects nothing: no telemetry, no account, no network access.", "Your presets and shapes stay on your computer." });
+    modal.head ("Installing and removing"); modal.bullets ({ "Windows: one .exe installer. macOS: one .pkg plus an Uninstall app. Linux: Flatpak or a plain .vst3 folder.", "The uninstaller removes everything it installed and keeps your presets and shapes, unless you tick the box to delete them too.", "Presets live in the Studio 87 / Whisker Scope folder of your user data." });
+    modal.head ("Fonts"); modal.para ("Barlow Condensed (Jeremy Tribby) and JetBrains Mono (JetBrains), both under the SIL Open Font License 1.1.");
+    modal.head ("Support the project"); modal.para ("If it helps your music, a coffee keeps it free for everyone.");
+    static const juce::String kofi;     // the Ko-fi page name goes here once the page exists (same as the mockup)
+    if (kofi.isEmpty()) modal.para ("The Ko-fi page is not set up yet. This button goes live when it is.");
+    modal.show ({ { "Support on Ko-fi", false, [] { if (kofi.isNotEmpty()) juce::URL ("https://ko-fi.com/" + kofi).launchInDefaultBrowser(); return false; } }, { "Close" } });
+}
+
+void Content::showGuide()
+{
+    modal.begin ("Quick guide");
+    modal.head ("Scope"); modal.bullets ({ "Shows the waveform. Sync keeps repeating waves still: Trigger, a fixed Hz, the detected pitch, or the host beat.", "Channels: L / R, mono, or Mid / Side." });
+    modal.head ("Spectrum"); modal.bullets ({ "Hover for frequency, note and dB. The top-left line names the highest peak.", "Waterfall shows history. Bands groups the curve like an equaliser. Freeze holds the picture." });
+    modal.head ("Stereo field"); modal.bullets ({ "Vertical line is mono, sideways is wide. A line leaning left or right means one channel is louder.", "Correlation and Mono loss tell you if it survives being summed to mono." });
+    modal.head ("Shapes, in three steps"); modal.bullets ({ "**1 Reference:** play the song or lead you want to sound like, press Capture reference, press again to keep it. Or pick a saved shape.", "**2 Mine:** play your own sound and Capture mine. Skip it and the live sound is used.", "**3 Match:** the bars at the bottom of the graph are the EQ that moves mine toward the reference. EQ on applies it to the sound.",
+                                                           "Input and Output set the level in and out. Auto level keeps the loudness the same with the EQ on or off (Keep my loudness), or follows the loudness captured with the reference (Match reference).", "Meters on the right show IN and OUT. Save shapes to your library; Manage exports and imports them as text." });
+    modal.head ("Meters"); modal.bullets ({ "Blue is normal, purple is a warning, pink is clipping. The pink cap on top stays lit until Peak reset.", "Metering: Peak, RMS (average level), both, or Loudness (LUFS): momentary M, short-term S and integrated I, the way streaming and broadcast meters read it." });
+    modal.head ("Window"); modal.para ("Drag any edge or corner to resize. The shape stays the same. Double-click a wooden side for the default size.");
+    modal.head ("Sidechain (layer B)"); modal.para ("Route a second track to the sidechain input of the plugin in your DAW. It is never played; it is drawn in yellow on Spectrum, Scope and Stereo field. On Spectrum, pink bands mark where A and B may mask each other (rule of thumb).");
+    modal.head ("Keys"); modal.para ("P panic (mutes the output), 1 to 4 pages, F freeze, R peak reset. Double-click a knob to reset it.");
+    modal.show ({ { "Close" } });
+}
+}   // namespace wsui
+
+//==============================================================================
+struct WhiskerScopeEditor::Handle : juce::Component
+{
+    Handle (WhiskerScopeEditor& e, int sx_, int sy_) : ed (e), sx (sx_), sy (sy_)
+    {
+        setMouseCursor (sx != 0 && sy != 0 ? ((sx * sy) > 0 ? juce::MouseCursor::TopLeftCornerResizeCursor : juce::MouseCursor::TopRightCornerResizeCursor) : sx != 0 ? juce::MouseCursor::LeftRightResizeCursor : juce::MouseCursor::UpDownResizeCursor);
+    }
+    void paint (juce::Graphics& g) override { if (isMouseOverOrDragging()) { g.setColour (juce::Colour (0x5502EBBA)); g.fillRoundedRectangle (getLocalBounds().toFloat(), 3.0f); } }
+    void mouseEnter (const juce::MouseEvent&) override { repaint(); }
+    void mouseExit (const juce::MouseEvent&) override { repaint(); }
+    void mouseDown (const juce::MouseEvent& e) override { start = e.getScreenPosition(); w0 = ed.getWidth(); h0 = ed.getHeight(); }
+    void mouseDrag (const juce::MouseEvent& e) override
+    {
+        const auto d = e.getScreenPosition() - start; const double aspect = (double) kDesignW / kDesignH; double w = w0;
+        const double cw = sx != 0 ? w0 + sx * d.x : -1.0, ch = sy != 0 ? h0 + sy * d.y : -1.0;
+        if (cw > 0 && ch > 0) w = 0.5 * (cw + ch * aspect); else if (cw > 0) w = cw; else if (ch > 0) w = ch * aspect;
+        ed.applyWidth ((int) std::lround (w));
+    }
+    void mouseUp (const juce::MouseEvent&) override { ed.saveScale(); }
+    WhiskerScopeEditor& ed; int sx, sy; juce::Point<int> start; int w0 = 0, h0 = 0;
+};
+
+WhiskerScopeEditor::WhiskerScopeEditor (WhiskerScopeProcessor& p) : AudioProcessorEditor (&p), proc (p)
+{
+    content = std::make_unique<wsui::Content> (*this, p); addAndMakeVisible (*content);
+    static const int dirs[8][2] = { { 0, -1 }, { 0, 1 }, { 1, 0 }, { -1, 0 }, { 1, -1 }, { -1, -1 }, { 1, 1 }, { -1, 1 } };
+    for (auto& d : dirs) { handles.push_back (std::make_unique<Handle> (*this, d[0], d[1])); addAndMakeVisible (*handles.back()); }
+    setResizable (true, false); getConstrainer()->setFixedAspectRatio ((double) kDesignW / kDesignH); getConstrainer()->setSizeLimits (kDesignW / 4, kDesignH / 4, (int) (kDesignW * 2.5), (int) (kDesignH * 2.5));
+    const int w = defaultWidth(); setSize (w, (int) std::lround (w * (double) kDesignH / kDesignW));
+}
+
+WhiskerScopeEditor::~WhiskerScopeEditor() { saveScale(); }
+
+int WhiskerScopeEditor::defaultWidth() const
+{
+    if (proc.editorWidth >= kDesignW / 4) return juce::jlimit (kDesignW / 4, (int) (kDesignW * 2.5), proc.editorWidth);
+    const auto s = WhiskerScopeProcessor::loadSettings(); if (s.winScale >= 0.25) return (int) std::lround (juce::jlimit (0.25, 2.5, s.winScale) * kDesignW);
+    double sc = 1.0; if (auto* d = juce::Desktop::getInstance().getDisplays().getPrimaryDisplay()) sc = std::min ({ 1.0, (d->userArea.getWidth() - 40.0) / kDesignW, (d->userArea.getHeight() - 120.0) / kDesignH });
+    return (int) std::lround (juce::jlimit (0.25, 1.0, sc) * kDesignW);
+}
+
+void WhiskerScopeEditor::applyWidth (int w)
+{
+    w = juce::jlimit (kDesignW / 4, (int) (kDesignW * 2.5), w); const int h = (int) std::lround ((double) w * kDesignH / kDesignW);
+    if (w != getWidth() || h != getHeight()) setSize (w, h);
+}
+
+void WhiskerScopeEditor::resetSize (bool exactly100)
+{
+    double sc = 1.0;
+    if (! exactly100) if (auto* d = juce::Desktop::getInstance().getDisplays().getPrimaryDisplay()) sc = std::min ({ 1.0, (d->userArea.getWidth() - 40.0) / kDesignW, (d->userArea.getHeight() - 120.0) / kDesignH });
+    applyWidth ((int) std::lround (juce::jlimit (0.25, 2.5, sc) * kDesignW)); saveScale();
+}
+
+void WhiskerScopeEditor::tickForScreenshot() { content->tickNow(); }
+
+void WhiskerScopeEditor::saveScale()
+{
+    proc.editorWidth = getWidth(); auto s = WhiskerScopeProcessor::loadSettings(); const double sc = scaleNow();
+    if (std::abs (s.winScale - sc) > 0.0005) { s.winScale = sc; WhiskerScopeProcessor::saveSettings (s); }
+}
 
 void WhiskerScopeEditor::resized()
 {
-    const float s = (float) getWidth() / (float) W;
-    content->setTransform (juce::AffineTransform::scale (s)); content->setBounds (0, 0, W, H);
-    if (corner) corner->setBounds (getWidth() - 26, getHeight() - 26, 26, 26);
-    proc.editorWidth = getWidth();
+    if (content == nullptr) return;
+    const double s = scaleNow(); content->setBounds (0, 0, kDesignW, kDesignH); content->setTransform (juce::AffineTransform::scale ((float) s));
+    const int w = getWidth(), h = getHeight(), t = 8, c = 18;
+    handles[0]->setBounds (c, 0, w - 2 * c, t); handles[1]->setBounds (c, h - t, w - 2 * c, t); handles[2]->setBounds (w - t, c, t, h - 2 * c); handles[3]->setBounds (0, c, t, h - 2 * c);
+    handles[4]->setBounds (w - c, 0, c, c); handles[5]->setBounds (0, 0, c, c); handles[6]->setBounds (w - c, h - c, c, c); handles[7]->setBounds (0, h - c, c, c);
+    proc.editorWidth = w;
 }
+

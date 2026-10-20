@@ -2,26 +2,27 @@
 
 A scope, spectrum and frequency analyzer that had too much catnip at lunch.
 
-Free and open source analyser plugin (VST3) from Studio 87. Early stage (v0.1.0 code, no release yet): the analysis engine and all four views are written and unit tested. It has not been tested in a DAW yet.
+Free and open source analyser plugin (VST3 and Standalone) from Studio 87. v0.2.0 has the real editor built from the approved mockup. It has been built and checked by CI (pluginval) but has not been tested by hand in a DAW or on macOS yet.
 
 ## What exists
-- Scope, Spectrum, Stereo field and Shapes views
+- Scope, Spectrum, Stereo field and Shapes views, resizable window (fixed shape, all edges and corners, 25 % to 250 %)
+- Every control is an automatable parameter; presets and saved shapes are plain files
 - L/R and Mid/Side analysis, 60 bands at 1/6 octave for Shapes
-- Peak label with level, frequency and note
-- Reference matching: capture a reference, see the EQ difference, save and share shapes as text
-- Momentary loudness (K weighted, a monitor, not certified) and stereo meters
-- The audio passes through untouched
+- Reference matching with a real Mid/Side match EQ in the audio path (30 bells per channel, Strength, Max move, EQ on, auto level, safety limiter)
+- Sidechain layer: the second input is drawn in yellow and the Spectrum marks where two tracks may mask each other
+- Peak label with level, frequency and note; momentary loudness-style meters, correlation, width and mono check
+- PDF manual with an interface tour made from screenshots of the real editor
 
 ## Not done yet
-- Sidechain layer (masking view)
-- Tests inside real DAWs, on macOS, and on Linux hosts
-- No release published, no installers tested
+- Tests by hand in real DAWs, on macOS and on Linux hosts
+- Installers not tested on real machines
+- Match EQ and presets not tuned by ear
 
 ## Build
-`cmake -B build -DWS_BUILD_PLUGIN=ON && cmake --build build`. The engine tests run without JUCE: `g++ -std=c++17 -Iinclude tests/engine_test.cpp && ./a.out`.
+`cmake -B build -DWS_BUILD_PLUGIN=ON && cmake --build build`. Screenshots of the real editor (for the manual tour): add `-DWS_BUILD_SHOOT=ON`, run `xvfb-run -a ws_shoot <dir> 1360 0`, then `python3 tools/tour_gen.py <dir> docs/tour`. The engine tests run without JUCE: `g++ -std=c++17 -Iinclude tests/engine_test.cpp && ./a.out`.
 
 ## Try the design
-Open [`docs/mockup/whisker-scope-mockup.html`](docs/mockup/whisker-scope-mockup.html) in a browser. It is a playable mockup, not the plugin.
+Open [`docs/mockup/whisker-scope-mockup.html`](docs/mockup/whisker-scope-mockup.html) in a browser. It is a playable mockup of the plugin window.
 
 ## Docs
 - [Roadmap](ROADMAP.md)

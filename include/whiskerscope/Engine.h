@@ -1,15 +1,15 @@
-// Whisker Scope analysis engine. Pure C++17, no JUCE, so it can be unit tested (tests/engine_test.cpp).
-// Contains: FFT, spectrum analyser (smoothing, tilt, peak hold, peak finder), levels (peak, RMS, K weighted loudness),
-// stereo field (correlation, width, balance, mono loss), scope trigger, and the Shapes bank (60 bands, capture,
-// matching EQ, text export and import).
+// Whisker Scope engine. Pure C++17, no JUCE, so it can be unit tested (tests/engine_test.cpp).
+// Contains: FFT and spectrum (Blackman window, 0 dB for a full scale sine), band maths, loudness (BS.1770 K weighting:
+// momentary, short term, integrated), stereo numbers, scope helpers, the Shapes maths (60 bands of 1/6 octave, matching
+// targets), and the Mid/Side match EQ (a cascade of peaking bells) with auto level and a safety limiter.
 #pragma once
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <cmath>
 #include <complex>
 #include <cstdint>
 #include <cstdlib>
-#include <sstream>
 #include <string>
 #include <vector>
 
@@ -17,7 +17,8 @@ namespace ws
 {
 constexpr double kPi = 3.14159265358979323846;
 inline float dbOf(float x) { return 20.0f * std::log10(std::max(x, 1.0e-9f)); }
-inline float powDb(float p) { return 10.0f * std::log10(std::max(p, 1.0e-18f)); }
+inline double clampd(double v, double a, double b) { return v < a ? a : (v > b ? b : v); }
+inline float clampf(float v, float a, float b) { return v < a ? a : (v > b ? b : v); }
 
 //==============================================================================
 // Radix 2 FFT, in place. n must be a power of two. Tables are built once per size.
@@ -53,7 +54,6 @@ private:
     int size = 0; std::vector<float> cosT, sinT; std::vector<int> rev;
 };
 
-//==============================================================================
 // Note name for a frequency (A4 = 440 Hz), for example "A4" or "C#5". Empty for non finite or non positive input.
 inline std::string noteName(double hz)
 {
@@ -64,62 +64,62 @@ inline std::string noteName(double hz)
 }
 
 //==============================================================================
-// Spectrum analyser. Feed it the newest `fftSize` samples (oldest first) with analyse(); read dB per bin.
-// Level reference: a full scale sine reads 0 dB at its peak bin.
-struct PeakInfo { float db = -200.0f; double hz = 0.0; };
-
-class SpectrumAnalyzer
+// Spectrum: Blackman window, FFT of the newest fftSize samples, magnitude smoothed in the linear domain, read as dB.
+// Level reference: a full scale sine (amplitude 1) reads 0 dB at its peak bin.
+class Spectrum
 {
 public:
     void prepare(double sampleRate, int fftSize)
     {
         sr = sampleRate; n = fftSize; fft.setSize(n);
-        win.resize(n); double s = 0; for (int i = 0; i < n; ++i) { win[i] = (float) (0.5 - 0.5 * std::cos(2.0 * kPi * i / n)); s += win[i]; }
-        norm = (float) (2.0 / s);     // sine of amplitude 1 gives a bin magnitude of 1
-        re.assign(n, 0); im.assign(n, 0); bins = n / 2 + 1; db.assign(bins, -200.0f); hold.assign(bins, -200.0f); smooth.assign(bins, -200.0f);
+        win.resize(n); double s = 0;
+        for (int i = 0; i < n; ++i) { const double p = 2.0 * kPi * i / n; win[i] = (float) (0.42 - 0.5 * std::cos(p) + 0.08 * std::cos(2.0 * p)); s += win[i]; }
+        norm = (float) (2.0 / s);
+        re.assign(n, 0); im.assign(n, 0); bins = n / 2; mag.assign(bins, 0.0f); db.assign(bins, -200.0f);
     }
-    int numBins() const { return bins; }
+    int numBins() const { return bins; }      // fftSize / 2 bins, bin k is at k * sr / fftSize
     int fftSize() const { return n; }
-    double binHz(int k) const { return sr * k / n; }
-
-    // x holds exactly fftSize samples. dt is the time since the last call, used by the smoothing.
-    void analyse(const float* x, float tiltDbPerOct, float attackMs, float releaseMs, float dt)
+    double sampleRate() const { return sr; }
+    // x holds exactly fftSize samples. smoothing is the keep factor of the old magnitude (0 = no smoothing, 0.8 = calm).
+    void analyse(const float* x, float smoothing)
     {
         for (int i = 0; i < n; ++i) { re[i] = x[i] * win[i]; im[i] = 0; }
         fft.forward(re.data(), im.data());
-        const float ka = attackMs <= 0 ? 1.0f : 1.0f - std::exp(-dt * 1000.0f / attackMs), kr = releaseMs <= 0 ? 1.0f : 1.0f - std::exp(-dt * 1000.0f / releaseMs);
+        const float k0 = clampf(smoothing, 0.0f, 0.999f);
         for (int k = 0; k < bins; ++k)
         {
-            const float mag = std::sqrt(re[k] * re[k] + im[k] * im[k]) * norm * (k == 0 || k == n / 2 ? 0.5f : 1.0f);
-            float d = dbOf(mag);
-            if (k > 0) d += tiltDbPerOct * std::log2((float) k / (float) n * (float) sr / 1000.0f);   // tilt is 0 dB at 1 kHz
-            float& s = smooth[k]; s += (d > s ? ka : kr) * (d - s); if (!(s > -200.0f)) s = -200.0f;
-            db[k] = s; if (s > hold[k]) hold[k] = s;
+            const float m = std::sqrt(re[k] * re[k] + im[k] * im[k]) * norm * (k == 0 ? 0.5f : 1.0f);
+            mag[k] = k0 * mag[k] + (1.0f - k0) * m; db[k] = std::max(-200.0f, dbOf(mag[k]));
         }
     }
-    void resetHold() { std::fill(hold.begin(), hold.end(), -200.0f); }
-    void resetSmoothing() { std::fill(smooth.begin(), smooth.end(), -200.0f); }
+    void reset() { std::fill(mag.begin(), mag.end(), 0.0f); std::fill(db.begin(), db.end(), -200.0f); }
     const std::vector<float>& spectrum() const { return db; }
-    const std::vector<float>& peakHold() const { return hold; }
-
-    // Highest peak above minDb, with frequency refined by parabolic interpolation of the three bins around it.
-    PeakInfo highest(float minDb = -90.0f, double loHz = 20.0, double hiHz = 20000.0) const
-    {
-        PeakInfo p; int best = -1; float bv = minDb;
-        for (int k = std::max(2, (int) std::ceil(loHz * n / sr)); k < std::min(bins - 1, (int) (hiHz * n / sr)); ++k)
-            if (db[k] > bv && db[k] >= db[k - 1] && db[k] >= db[k + 1]) { bv = db[k]; best = k; }
-        if (best < 0) return p;
-        const float a = db[best - 1], b = db[best], c = db[best + 1], den = a - 2 * b + c;
-        const float off = std::fabs(den) < 1e-6f ? 0.0f : 0.5f * (a - c) / den;
-        p.hz = binHz(best) + off * sr / n; p.db = b - 0.25f * (a - c) * off; return p;
-    }
 private:
-    double sr = 48000; int n = 2048, bins = 1025; float norm = 1; Fft fft; std::vector<float> win, re, im, db, hold, smooth;
+    double sr = 48000; int n = 2048, bins = 1024; float norm = 1; Fft fft; std::vector<float> win, re, im, mag, db;
 };
 
+// dB read at a frequency, linear interpolation between bins. arr has n bins, bin k at k * sr / (2 n).
+inline float binDb(const float* arr, int n, double sr, double f)
+{
+    const double df = sr / (n * 2.0), p = f / df; const int i = (int) std::floor(p); const float fr = (float) (p - i);
+    if (i < 0) return arr[0];
+    if (i >= n - 1) return arr[n - 1];
+    return arr[i] * (1 - fr) + arr[i + 1] * fr;
+}
+// Mean power between f0 and f1 in dB (interpolated when the band is narrower than a bin). Bins below -139 count as -140.
+inline float bandDb(const float* arr, int n, double sr, double f0, double f1)
+{
+    const double df = sr / (n * 2.0), b0 = f0 / df, b1 = f1 / df;
+    if (b1 - b0 < 1) return binDb(arr, n, sr, 0.5 * (f0 + f1));
+    const int i0 = std::max(0, (int) std::floor(b0)), i1 = std::min(n - 1, (int) std::ceil(b1)); double s = 0; int c = 0;
+    for (int i = i0; i <= i1; ++i) { float v = arr[i]; if (v < -139.0f) v = -140.0f; s += std::pow(10.0, v / 10.0); ++c; }
+    return (float) (10.0 * std::log10(s / std::max(1, c) + 1e-30));
+}
+
 //==============================================================================
-// Levels: peak, floating RMS, and momentary loudness with K weighting (ITU-R BS.1770: shelf + high-pass, 400 ms window).
-// The result is labelled "LUFS" but this is a monitoring meter, not a certified loudness measurement.
+// Loudness, ITU-R BS.1770 K weighting (shelf + high pass), 100 ms sub blocks. momentary = last 400 ms, short term = last 3 s,
+// integrated = gated (absolute -70 LUFS, relative -10 LU) over the stored 400 ms blocks (up to two hours). Called from the audio
+// thread (no allocation after prepare); the numbers are atomics for the display. This is a monitoring meter, not a certified one.
 struct Biquad
 {
     double b0 = 1, b1 = 0, b2 = 0, a1 = 0, a2 = 0, z1 = 0, z2 = 0;
@@ -137,174 +137,290 @@ inline Biquad kHighpass(double sr)
     const double f0 = 38.13547087602444, Q = 0.5003270373238773, K = std::tan(kPi * f0 / sr), a0 = 1 + K / Q + K * K; Biquad b;
     b.b0 = 1; b.b1 = -2; b.b2 = 1; b.a1 = 2 * (K * K - 1) / a0; b.a2 = (1 - K / Q + K * K) / a0; return b;
 }
+inline double luOf(double e) { return e > 1e-12 ? -0.691 + 10.0 * std::log10(e) : -120.0; }
 
-class Loudness
+class LoudnessMeter
 {
 public:
+    static constexpr int kHist = 72000;      // two hours of 400 ms blocks, one per 100 ms
     void prepare(double sampleRate)
     {
-        sr = sampleRate; for (int c = 0; c < 2; ++c) { shelf[c] = kShelf(sr); hp[c] = kHighpass(sr); }
-        win = std::max(1, (int) std::lround(0.4 * sr)); ring.assign(win, 0.0f); pos = 0; sum = 0; filled = 0;
+        sr = sampleRate; sub = std::max(1, (int) std::lround(sr * 0.1)); hist.assign(kHist, 0.0f); resetState();
+        mom.store(-120.0f); shortT.store(-120.0f); integ.store(-120.0f); maxM.store(-120.0f);
     }
-    // One stereo frame in, momentary loudness available from lufs().
-    void tick(float l, float r)
+    void requestReset() { resetFlag.store(true); }
+    void process(const float* l, const float* r, int count)
     {
-        const double a = hp[0].tick(shelf[0].tick(l)), b = hp[1].tick(shelf[1].tick(r));
-        const float p = (float) (a * a + b * b);
-        sum += p - ring[pos]; ring[pos] = p; if (++pos >= win) pos = 0; if (filled < win) ++filled;
-        if (sum < 0) sum = 0;
+        if (resetFlag.exchange(false)) { resetState(); mom.store(-120.0f); shortT.store(-120.0f); integ.store(-120.0f); maxM.store(-120.0f); }
+        for (int i = 0; i < count; ++i)
+        {
+            const double a = hp[0].tick(sh[0].tick(l[i])), b = hp[1].tick(sh[1].tick(r ? r[i] : l[i]));
+            acc += a * a + b * b;
+            if (++cnt >= sub) endSub();
+        }
     }
-    float lufs() const { return filled < win / 4 ? -200.0f : (float) (-0.691 + 10.0 * std::log10(std::max(1e-12, sum / win))); }
-    void reset() { std::fill(ring.begin(), ring.end(), 0.0f); sum = 0; filled = 0; pos = 0; for (int c = 0; c < 2; ++c) { shelf[c].reset(); hp[c].reset(); } }
+    float momentary() const { return mom.load(); }
+    float shortTerm() const { return shortT.load(); }
+    float integrated() const { return integ.load(); }
+    float maxMomentary() const { return maxM.load(); }
 private:
-    double sr = 48000, sum = 0; Biquad shelf[2], hp[2]; std::vector<float> ring; int win = 1, pos = 0, filled = 0;
+    static constexpr int kSubs = 40;
+    void resetState()
+    {
+        for (int c = 0; c < 2; ++c) { sh[c] = kShelf(sr); hp[c] = kHighpass(sr); }
+        acc = 0; cnt = 0; nsub = 0; head = 0; histN = 0; maxMom = -120.0;
+    }
+    void endSub()
+    {
+        subs[head] = acc / sub; head = (head + 1) % kSubs; nsub = std::min(kSubs, nsub + 1); acc = 0; cnt = 0;
+        if (nsub < 4) return;
+        auto at = [&](int back) { return subs[(head - 1 - back + 2 * kSubs) % kSubs]; };
+        const double b = (at(0) + at(1) + at(2) + at(3)) / 4.0, m = luOf(b);
+        if (histN >= kHist) { std::copy(hist.begin() + kHist / 2, hist.end(), hist.begin()); histN = kHist / 2; }
+        hist[histN++] = (float) b; if (m > maxMom) maxMom = m;
+        mom.store((float) m); maxM.store((float) maxMom);
+        const int n = std::min(30, nsub); double a = 0; for (int i = 0; i < n; ++i) a += at(i); shortT.store((float) luOf(a / n));
+        const double absT = std::pow(10.0, (-70.0 + 0.691) / 10.0); double s = 0; int c = 0;
+        for (int i = 0; i < histN; ++i) if (hist[i] > absT) { s += hist[i]; ++c; }
+        if (!c) { integ.store(-120.0f); return; }
+        const double rel = s / c * 0.1; s = 0; c = 0;
+        for (int i = 0; i < histN; ++i) if (hist[i] > absT && hist[i] > rel) { s += hist[i]; ++c; }
+        integ.store(c ? (float) luOf(s / c) : -120.0f);
+    }
+    double sr = 48000, acc = 0, maxMom = -120.0; int sub = 4800, cnt = 0, nsub = 0, head = 0, histN = 0;
+    Biquad sh[2], hp[2]; double subs[kSubs] = {}; std::vector<float> hist;
+    std::atomic<bool> resetFlag { false }; std::atomic<float> mom { -120.0f }, shortT { -120.0f }, integ { -120.0f }, maxM { -120.0f };
 };
 
 //==============================================================================
-// Stereo field numbers from running sums (exponential window, time constant tauMs).
-struct StereoStats { float correlation = 0, width = 0, balance = 0, monoLossDb = 0, rmsL = 0, rmsR = 0, rmsM = 0, rmsS = 0; };
+// Stereo field numbers from the newest samples (the display smooths them over time).
+struct StereoNow { bool silent = true; float correlation = 0, monoLossDb = 0, widthPct = 0, balanceDb = 0; };
+inline StereoNow stereoNow(const float* l, const float* r, int n)
+{
+    double ll = 0, rr = 0, lr = 0, mm = 0, ss = 0;
+    for (int i = 0; i < n; ++i) { const double a = l[i], b = r[i], m = (a + b) * 0.5, s = (a - b) * 0.5; ll += a * a; rr += b * b; lr += a * b; mm += m * m; ss += s * s; }
+    StereoNow o; o.silent = (ll + rr) / (2.0 * std::max(1, n)) < 1e-7; if (o.silent) return o;
+    o.correlation = (float) (lr / std::sqrt(ll * rr + 1e-20));
+    o.monoLossDb = (float) (10.0 * std::log10((mm + 1e-20) / ((ll + rr) / 2 + 1e-20)));
+    o.widthPct = (float) clampd(std::sqrt(ss / (mm + 1e-12)) * 100.0, 0, 200);
+    o.balanceDb = (float) clampd(10.0 * std::log10((ll + 1e-12) / (rr + 1e-12)), -24, 24); return o;
+}
+// 0 mono safe, 1 check mono, 2 phase problem, -1 no signal (rules of thumb of the mockup, ours, not a standard).
+inline int stereoVerdict(bool silent, float corr, float monoLossDb)
+{
+    if (silent) return -1;
+    if (corr < -0.2f || monoLossDb < -6.0f) return 2;
+    if (corr < 0.2f || monoLossDb < -3.0f) return 1;
+    return 0;
+}
 
-class StereoMeter
+//==============================================================================
+// Scope helper: autocorrelation pitch (Hz, 0 when no clear tone) on 2048 samples, every second one of the newest 4096.
+inline double detectPitch(const float* x, int len, double sr)
+{
+    const int n = 2048; if (len < 4096) return 0;
+    std::vector<float> d(n); const int off = len - 4096; for (int i = 0; i < n; ++i) d[i] = x[off + 2 * i];
+    const double s2 = sr / 2; const int minL = std::max(2, (int) std::floor(s2 / 1500)), maxL = std::min(n / 2, (int) std::floor(s2 / 50));
+    double r0 = 0; for (int i = 0; i < n; ++i) r0 += (double) d[i] * d[i];
+    if (r0 < 1e-4) return 0;
+    double best = 0, prev = 1; int bl = 0; bool rising = false;
+    for (int l = minL; l < maxL; ++l)
+    {
+        double r = 0; for (int i = 0; i < n - l; ++i) r += (double) d[i] * d[i + l]; r /= r0;
+        if (r > prev) rising = true;
+        if (rising && r > best) { best = r; bl = l; }
+        prev = r;
+    }
+    return (best > 0.6 && bl) ? s2 / bl : 0;
+}
+
+//==============================================================================
+// Shapes: the average spectrum of a signal on 60 bands of 1/6 octave from 20 Hz (band k spans 20 * 2^(k/6) to 20 * 2^((k+1)/6)),
+// kept apart for Mid and Side.
+constexpr int kBands = 60;
+inline double bandEdgeHz(int k) { return 20.0 * std::pow(2.0, k / 6.0); }
+inline double bandCentreHz(int k) { return 20.0 * std::pow(2.0, (k + 0.5) / 6.0); }
+
+struct Shape
+{
+    std::string name; std::array<float, kBands> m {}, s {}; float lufs = -999.0f;   // lufs below -900: not stored
+    bool hasLufs() const { return lufs > -900.0f; }
+};
+
+// dB spectrum (n bins) to 60 band levels in dB. Bands above 98 percent of Nyquist are -140.
+inline void spectrumToBands(const float* db, int n, double sr, float* out)
+{
+    for (int k = 0; k < kBands; ++k) out[k] = bandEdgeHz(k + 1) > sr / 2 * 0.98 ? -140.0f : bandDb(db, n, sr, bandEdgeHz(k), bandEdgeHz(k + 1));
+}
+// Each shape is compared against its own average (bands 6 to 57), so only the tone matters, not the level.
+inline void relNorm(const float* a, float* o)
+{
+    double s = 0; int c = 0; for (int k = 6; k <= 57; ++k) if (a[k] > -130.0f) { s += a[k]; ++c; }
+    const float mu = c ? (float) (s / c) : 0.0f; for (int k = 0; k < kBands; ++k) o[k] = a[k] > -130.0f ? a[k] - mu : -30.0f;
+}
+inline void smoothBands(const float* d, int w, float* o)
+{
+    const int h = w / 2;
+    for (int k = 0; k < kBands; ++k) { double a = 0; int c = 0; for (int j = k - h; j <= k + h; ++j) if (j >= 0 && j < kBands) { a += d[j]; ++c; } o[k] = (float) (a / c); }
+}
+inline void tiltBands(const float* in, float dbPerOct, float* out)
+{
+    for (int k = 0; k < kBands; ++k) out[k] = in[k] + dbPerOct * (float) std::log2(bandCentreHz(k) / 1000.0);
+}
+// The EQ that moves `mine` toward `ref`: both normalised, difference, smoothed over smoothBandsN bands, times strength, limited to +-limitDb.
+inline void matchTargets(const float* ref, const float* mine, int smoothBandsN, float strength, float limitDb, float* out)
+{
+    float a[kBands], b[kBands], d[kBands], sm[kBands]; relNorm(ref, a); relNorm(mine, b);
+    for (int k = 0; k < kBands; ++k) d[k] = a[k] - b[k];
+    smoothBands(d, std::max(1, smoothBandsN), sm);
+    for (int k = 0; k < kBands; ++k) out[k] = clampf(sm[k] * strength, -limitDb, limitDb);
+}
+// Value at a frequency from 60 band values (interpolated between band centres).
+inline float interpBands(const float* arr, double fc)
+{
+    const double kf = clampd(6.0 * std::log2(fc / 20.0) - 0.5, 0, kBands - 1); const int a = (int) std::floor(kf), b = std::min(kBands - 1, a + 1); const float f = (float) (kf - a);
+    return arr[a] * (1 - f) + arr[b] * f;
+}
+inline bool shapeValuesOk(const std::vector<double>& v)
+{
+    if ((int) v.size() != kBands) return false;
+    for (double x : v) if (!std::isfinite(x) || x <= -200 || x >= 80) return false;
+    return true;
+}
+
+//==============================================================================
+// Match EQ: 30 peaking bells (every second band centre, 1/3 octave apart) per channel, Mid and Side apart.
+// designBells fits the bell gains so the cascade follows the 60 band target curve (a few correction passes, because bells overlap).
+constexpr int kBells = 30;
+constexpr double kBellQ = 2.5;
+inline double bellHz(int i) { return bandCentreHz(2 * i + 1); }
+
+// Exact magnitude in dB of an RBJ peaking biquad (centre fc, quality q, gain g dB) at frequency f, sample rate fs.
+inline double peakingDb(double fc, double q, double g, double fs, double f)
+{
+    const double A = std::pow(10.0, g / 40.0), w0 = 2 * kPi * fc / fs, al = std::sin(w0) / (2 * q), c0 = std::cos(w0);
+    const double b0 = 1 + al * A, b1 = -2 * c0, b2 = 1 - al * A, a0 = 1 + al / A, a1 = -2 * c0, a2 = 1 - al / A, w = 2 * kPi * f / fs;
+    const std::complex<double> z1 = std::polar(1.0, -w), z2 = std::polar(1.0, -2 * w);
+    const double num = std::abs(b0 + b1 * z1 + b2 * z2), den = std::abs(a0 + a1 * z1 + a2 * z2);
+    return 20.0 * std::log10(std::max(1e-12, num / den));
+}
+inline void designBells(const float* target, double fs, float* gains)
+{
+    double g[kBells] = {}, tgt[kBells];
+    for (int i = 0; i < kBells; ++i) tgt[i] = 0.5 * (target[2 * i] + target[2 * i + 1]);
+    for (int pass = 0; pass < 14; ++pass)
+        for (int i = 0; i < kBells; ++i)
+        {
+            if (bellHz(i) > 0.45 * fs) { g[i] = 0; continue; }
+            double r = 0; for (int j = 0; j < kBells; ++j) if (g[j] != 0.0 && bellHz(j) <= 0.45 * fs) r += peakingDb(bellHz(j), kBellQ, g[j], fs, bellHz(i));
+            g[i] = clampd(g[i] + 0.6 * (tgt[i] - r), -24, 24);
+        }
+    for (int i = 0; i < kBells; ++i) gains[i] = (float) g[i];
+}
+inline double bellsResponseDb(const float* gains, double fs, double f)
+{
+    double r = 0; for (int j = 0; j < kBells; ++j) if (gains[j] != 0.0f && bellHz(j) <= 0.45 * fs) r += peakingDb(bellHz(j), kBellQ, gains[j], fs, f);
+    return r;
+}
+
+class BellCascade
 {
 public:
-    void prepare(double sampleRate, float tauMs = 300.0f) { k = 1.0 - std::exp(-1000.0 / (tauMs * sampleRate)); reset(); }
-    void reset() { ll = rr = lr = mm = ss = 0; }
-    void tick(float l, float r)
+    // Sets the coefficients. Bells under 0.05 dB are skipped; a bell that was off starts from a clean state.
+    void design(const float* gains, double fs)
     {
-        const double m = 0.5 * (l + r), s = 0.5 * (l - r);
-        ll += k * ((double) l * l - ll); rr += k * ((double) r * r - rr); lr += k * ((double) l * r - lr); mm += k * (m * m - mm); ss += k * (s * s - ss);
+        for (int i = 0; i < kBells; ++i)
+        {
+            const double gdb = gains[i]; const bool on = std::fabs(gdb) >= 0.05 && bellHz(i) <= 0.45 * fs;
+            if (!on) { active[i] = false; z1[i] = z2[i] = 0; continue; }
+            const double A = std::pow(10.0, gdb / 40.0), w0 = 2 * kPi * bellHz(i) / fs, al = std::sin(w0) / (2 * kBellQ), c0 = std::cos(w0), a0 = 1 + al / A;
+            b0[i] = (1 + al * A) / a0; b1[i] = -2 * c0 / a0; b2[i] = (1 - al * A) / a0; a1[i] = -2 * c0 / a0; a2[i] = (1 - al / A) / a0;
+            if (!active[i]) z1[i] = z2[i] = 0;
+            active[i] = true;
+        }
+        any = false; for (int i = 0; i < kBells; ++i) any = any || active[i];
     }
-    StereoStats get() const
+    bool isActive() const { return any; }
+    double process(double x)
     {
-        StereoStats o; const double e = std::sqrt(ll * rr);
-        o.correlation = e < 1e-12 ? 0.0f : (float) std::max(-1.0, std::min(1.0, lr / e));
-        o.rmsL = (float) std::sqrt(ll); o.rmsR = (float) std::sqrt(rr); o.rmsM = (float) std::sqrt(mm); o.rmsS = (float) std::sqrt(ss);
-        o.width = (mm + ss) < 1e-12 ? 0.0f : (float) (ss / (mm + ss));                      // share of side energy, 0 (mono) to 1 (all side)
-        o.balance = (ll + rr) < 1e-12 ? 0.0f : (float) ((rr - ll) / (rr + ll));              // -1 left, +1 right
-        const double avg = 0.5 * (ll + rr); o.monoLossDb = avg < 1e-12 ? 0.0f : (float) (10.0 * std::log10(std::max(1e-12, mm / avg)));   // 0 dB: nothing lost in mono
-        return o;
+        if (!std::isfinite(x)) { reset(); return 0; }
+        for (int i = 0; i < kBells; ++i)
+        {
+            if (!active[i]) continue;
+            const double y = b0[i] * x + z1[i]; z1[i] = b1[i] * x - a1[i] * y + z2[i]; z2[i] = b2[i] * x - a2[i] * y; x = y;
+        }
+        return x;
     }
-    // Rules of thumb of the mockup (ours, not a standard).
-    static const char* verdict(const StereoStats& s)
-    {
-        if (s.correlation < -0.2f) return "Phase problem";
-        if (s.correlation < 0.2f || s.monoLossDb < -3.0f) return "Check mono";
-        return "Mono safe";
-    }
+    void reset() { for (int i = 0; i < kBells; ++i) z1[i] = z2[i] = 0; }
 private:
-    double k = 0.001, ll = 0, rr = 0, lr = 0, mm = 0, ss = 0;
+    bool any = false; bool active[kBells] = {};
+    double b0[kBells] = {}, b1[kBells] = {}, b2[kBells] = {}, a1[kBells] = {}, a2[kBells] = {}, z1[kBells] = {}, z2[kBells] = {};
+};
+
+// Mid/Side EQ stage. With one channel only Mid is used.
+class MidSideEq
+{
+public:
+    void design(const float* gainsM, const float* gainsS, double fs) { m.design(gainsM, fs); s.design(gainsS, fs); }
+    bool isActive() const { return m.isActive() || s.isActive(); }
+    void reset() { m.reset(); s.reset(); }
+    void process(float& l, float& r)
+    {
+        const double mid = 0.5 * ((double) l + r), sid = 0.5 * ((double) l - r), M = m.process(mid), S = s.process(sid);
+        l = (float) (M + S); r = (float) (M - S);
+    }
+    void processMono(float& l) { l = (float) m.process(l); }
+private:
+    BellCascade m, s;
+};
+
+// Auto level (mockup rules): keeps the loudness of the matched sound equal to the loudness that comes in (mode 1), or to the
+// loudness stored with the reference (mode 2). Moves slowly (1 s), never beyond +-12 dB, never so far that peaks pass -0.3 dBFS.
+struct AutoLevel
+{
+    float db = 0, prePeakDb = -120.0f; bool held = false;
+    void reset() { db = 0; prePeakDb = -120.0f; held = false; }
+    // mode 0 off, 1 keep mine, 2 match reference. refLufs: loudness stored with the reference, or below -900 for none.
+    void update(float dt, int mode, float preShortLufs, float inShortLufs, float refLufs, float outDb, float newPeakDb)
+    {
+        held = false; prePeakDb = std::max(newPeakDb, prePeakDb - 6.0f * dt); bool ok = false; float want = 0;
+        if (mode != 0)
+        {
+            const float tgt = (mode == 2 && refLufs > -900.0f) ? refLufs : inShortLufs;
+            if (preShortLufs > -65.0f && tgt > -65.0f)
+            {
+                want = clampf(tgt - preShortLufs, -12.0f, 12.0f); const float cap = -0.3f - prePeakDb - outDb;
+                if (want > cap) { want = cap; held = true; }
+                ok = true;
+            }
+        }
+        if (mode == 0) db += (0 - db) * std::min(1.0f, dt / 0.3f); else if (ok) db += (want - db) * std::min(1.0f, dt / 1.0f);
+        if (std::fabs(db) < 0.002f && (mode == 0 || (ok && std::fabs(want) < 0.002f))) db = 0;     // snap to exactly 0 dB so the path is bit exact again
+    }
+};
+
+// Safety limiter: instant attack, 60 ms release, ceiling -0.1 dBFS. Only meant to catch overs from the match stage.
+struct SafetyLimiter
+{
+    static constexpr float ceiling = 0.98855f; float gr = 1.0f, rel = 0.999f;
+    void prepare(double fs) { rel = (float) std::exp(-1.0 / (0.060 * fs)); gr = 1.0f; }
+    void process(float& l, float& r)
+    {
+        const float pk = std::max(std::fabs(l), std::fabs(r)); const float need = pk > ceiling ? ceiling / pk : 1.0f;
+        gr = std::min(need, 1.0f + (gr - 1.0f) * rel);
+        l *= gr; r *= gr;
+    }
+    void processMono(float& l) { float r = l; process(l, r); l = r; }
 };
 
 //==============================================================================
-// Scope trigger: index of the first rising zero crossing (through `level`) after `from`, or -1. Used by the free-run
-// and trigger sync modes.
-inline int findRisingCrossing(const float* x, int n, int from, float level = 0.0f)
-{
-    for (int i = std::max(1, from); i < n; ++i) if (x[i - 1] < level && x[i] >= level) return i;
-    return -1;
-}
-// Period in samples by autocorrelation, for the pitch sync mode. Returns 0 when no clear period (strength below 0.5).
-inline int findPeriod(const float* x, int n, int minLag, int maxLag)
-{
-    maxLag = std::min(maxLag, n / 2); double e0 = 0; for (int i = 0; i < n - maxLag; ++i) e0 += (double) x[i] * x[i];
-    if (e0 < 1e-9) return 0;
-    int best = 0; double bv = 0.5;
-    for (int lag = minLag; lag < maxLag; ++lag)
-    {
-        double s = 0, e1 = 0; for (int i = 0; i < n - maxLag; ++i) { s += (double) x[i] * x[i + lag]; e1 += (double) x[i + lag] * x[i + lag]; }
-        const double c = s / std::sqrt(std::max(1e-12, e0 * e1)); if (c > bv) { bv = c; best = lag; }
-    }
-    return best;
-}
-
-//==============================================================================
-// Shapes: the average spectrum of a signal on 60 bands of 1/6 octave from 20 Hz, kept apart for Mid and Side.
-constexpr int kShapeBands = 60;
-inline double shapeBandHz(int i) { return 20.0 * std::pow(2.0, i / 6.0); }
-
-struct Shape { std::string name; std::vector<float> mid, side; Shape() : mid(kShapeBands, 0.0f), side(kShapeBands, 0.0f) {} };
-
-// dB spectrum (analyser bins) to 60 band levels in dB: mean power inside each band, interpolated when a band is narrower than a bin.
-inline void binsToBands(const std::vector<float>& db, double sr, int fftSize, float* out)
-{
-    const double bh = sr / fftSize; const int bins = (int) db.size();
-    for (int i = 0; i < kShapeBands; ++i)
-    {
-        const double lo = shapeBandHz(i) * std::pow(2.0, -1.0 / 12.0), hi = shapeBandHz(i) * std::pow(2.0, 1.0 / 12.0);
-        int k0 = (int) std::ceil(lo / bh), k1 = (int) std::floor(hi / bh);
-        if (k1 < k0) { const double f = shapeBandHz(i) / bh; const int a = std::min(bins - 2, std::max(0, (int) f)); const float t = (float) (f - a); out[i] = db[a] * (1 - t) + db[a + 1] * t; continue; }
-        k0 = std::max(1, k0); k1 = std::min(bins - 1, k1); double p = 0; int c = 0;
-        for (int k = k0; k <= k1; ++k) { p += std::pow(10.0, db[k] / 10.0); ++c; }
-        out[i] = c ? (float) (10.0 * std::log10(std::max(1e-20, p / c))) : -120.0f;
-    }
-}
-
-// Averages frames that carry signal (frame loudness above gateDb), Mid and Side apart.
-class ShapeCapture
+// Lock free single writer ring for the audio thread to hand samples to the display thread. Size is a power of two.
+template <int Log2Size>
+class SampleRingT
 {
 public:
-    void reset() { frames = 0; for (int i = 0; i < kShapeBands; ++i) accM[i] = accS[i] = 0.0; }
-    // bandsM, bandsS in dB; frameDb is the loudness of the frame, used as the gate.
-    bool add(const float* bandsM, const float* bandsS, float frameDb, float gateDb = -60.0f)
-    {
-        if (frameDb < gateDb) return false;
-        for (int i = 0; i < kShapeBands; ++i) { accM[i] += std::pow(10.0, bandsM[i] / 10.0); accS[i] += std::pow(10.0, bandsS[i] / 10.0); }
-        ++frames; return true;
-    }
-    int count() const { return frames; }
-    bool result(Shape& s) const
-    {
-        if (frames < 1) return false;
-        for (int i = 0; i < kShapeBands; ++i) { s.mid[i] = (float) (10.0 * std::log10(std::max(1e-20, accM[i] / frames))); s.side[i] = (float) (10.0 * std::log10(std::max(1e-20, accS[i] / frames))); }
-        return true;
-    }
-private:
-    double accM[kShapeBands] = {}, accS[kShapeBands] = {}; int frames = 0;
-};
-
-inline float meanOf(const std::vector<float>& v) { double s = 0; for (float x : v) s += x; return v.empty() ? 0.0f : (float) (s / v.size()); }
-
-// EQ that moves `mine` toward `ref`: each shape is normalised to its own average, then difference, 3 tap smoothing,
-// times strength (0..1), limited to +-maxMoveDb.
-inline std::vector<float> matchingEq(const std::vector<float>& ref, const std::vector<float>& mine, float strength, float maxMoveDb)
-{
-    std::vector<float> d(kShapeBands, 0.0f); if ((int) ref.size() != kShapeBands || (int) mine.size() != kShapeBands) return d;
-    const float mr = meanOf(ref), mm = meanOf(mine);
-    for (int i = 0; i < kShapeBands; ++i) d[i] = (ref[i] - mr) - (mine[i] - mm);
-    std::vector<float> s(kShapeBands);
-    for (int i = 0; i < kShapeBands; ++i) { const float a = d[std::max(0, i - 1)], b = d[i], c = d[std::min(kShapeBands - 1, i + 1)]; s[i] = 0.25f * a + 0.5f * b + 0.25f * c; }
-    for (auto& v : s) v = std::max(-maxMoveDb, std::min(maxMoveDb, v * strength));
-    return s;
-}
-
-// Text form of a shape: "WSHAPE1|name|m0,m1,...|s0,s1,...". Import validates everything and refuses bad input.
-inline std::string shapeToText(const Shape& s)
-{
-    std::ostringstream o; o.setf(std::ios::fixed); o.precision(1); std::string nm; for (char c : s.name) if (c != '|' && c != '\n' && c != '\r') nm += c;
-    o << "WSHAPE1|" << nm << "|"; for (int i = 0; i < kShapeBands; ++i) o << (i ? "," : "") << s.mid[i];
-    o << "|"; for (int i = 0; i < kShapeBands; ++i) o << (i ? "," : "") << s.side[i]; return o.str();
-}
-inline bool parseList(const std::string& t, std::vector<float>& out)
-{
-    out.clear(); std::stringstream ss(t); std::string tok;
-    while (std::getline(ss, tok, ',')) { char* e = nullptr; const double v = std::strtod(tok.c_str(), &e); if (e == tok.c_str() || *e != 0 || !std::isfinite(v) || v < -200 || v > 40) return false; out.push_back((float) v); }
-    return (int) out.size() == kShapeBands;
-}
-inline bool shapeFromText(const std::string& text, Shape& out)
-{
-    if (text.size() > 4000) return false;
-    std::vector<std::string> p; std::stringstream ss(text); std::string tok; while (std::getline(ss, tok, '|')) p.push_back(tok);
-    if (p.size() != 4 || p[0] != "WSHAPE1" || p[1].empty() || p[1].size() > 40) return false;
-    Shape s; s.name = p[1]; if (!parseList(p[2], s.mid) || !parseList(p[3], s.side)) return false; out = s; return true;
-}
-
-//==============================================================================
-// Lock free single writer ring for the audio thread to hand samples to the display thread.
-class SampleRing
-{
-public:
-    static constexpr int kSize = 1 << 16;
-    SampleRing() : buf(kSize, 0.0f) {}
+    static constexpr int kSize = 1 << Log2Size;
+    SampleRingT() : buf(kSize, 0.0f) {}
     void push(float x) { const uint64_t w = wr.load(std::memory_order_relaxed); buf[w & (kSize - 1)] = x; wr.store(w + 1, std::memory_order_release); }
     // Copies the newest n samples (oldest first). A tear at the very newest samples is possible and harmless for display.
     void latest(float* out, int n) const
@@ -316,4 +432,6 @@ public:
 private:
     std::vector<float> buf; std::atomic<uint64_t> wr { 0 };
 };
+using SampleRing = SampleRingT<18>;     // about 1.3 s at 192 kHz
+using SampleRingSmall = SampleRingT<16>;
 }

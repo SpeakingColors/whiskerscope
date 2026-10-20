@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.22)
-project(WhiskerScope VERSION 0.1.0 LANGUAGES C CXX)
+project(WhiskerScope VERSION 0.2.0 LANGUAGES C CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
@@ -32,12 +32,31 @@ if(WS_BUILD_PLUGIN)
     VST3_CATEGORIES Fx Analyzer
     COPY_PLUGIN_AFTER_BUILD FALSE)
 
+  # Fonts (SIL Open Font License, texts next to the files)
+  juce_add_binary_data(WhiskerScopeFonts SOURCES
+    assets/fonts/BarlowCondensed-Medium.ttf assets/fonts/BarlowCondensed-SemiBold.ttf assets/fonts/BarlowCondensed-Bold.ttf
+    assets/fonts/JetBrainsMono-Variable.ttf)
+
   target_sources(WhiskerScope PRIVATE src/PluginProcessor.cpp src/PluginEditor.cpp)
+  target_compile_definitions(WhiskerScope PRIVATE WS_VERSION="${PROJECT_VERSION}")
   target_include_directories(WhiskerScope SYSTEM PRIVATE include)
   target_include_directories(WhiskerScope PRIVATE src)
   target_compile_definitions(WhiskerScope PUBLIC
     JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0 JUCE_VST3_CAN_REPLACE_VST2=0 JUCE_DISPLAY_SPLASH_SCREEN=0)
   target_link_libraries(WhiskerScope PRIVATE
+    WhiskerScopeFonts
     juce::juce_audio_utils
     PUBLIC juce::juce_recommended_config_flags juce::juce_recommended_warning_flags)
+endif()
+
+# Screenshot tool for the manual tour and design checks (off by default, never built in CI or releases):
+#   cmake -DWS_BUILD_SHOOT=ON ... && cmake --build . --target ws_shoot && xvfb-run build/ws_shoot docs/tour/shots
+option(WS_BUILD_SHOOT "Build the offscreen screenshot tool" OFF)
+if(WS_BUILD_SHOOT AND WS_BUILD_PLUGIN)
+  juce_add_console_app(ws_shoot PRODUCT_NAME "ws_shoot")
+  target_sources(ws_shoot PRIVATE tools/shoot.cpp src/PluginProcessor.cpp src/PluginEditor.cpp)
+  target_include_directories(ws_shoot SYSTEM PRIVATE include)
+  target_include_directories(ws_shoot PRIVATE src)
+  target_compile_definitions(ws_shoot PRIVATE WS_VERSION="${PROJECT_VERSION}" JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0 JUCE_MODAL_LOOPS_PERMITTED=1)
+  target_link_libraries(ws_shoot PRIVATE WhiskerScopeFonts juce::juce_audio_utils juce::juce_recommended_config_flags)
 endif()

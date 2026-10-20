@@ -1,14 +1,18 @@
 #pragma once
 #include <juce_audio_processors/juce_audio_processors.h>
 #include "whiskerscope/Engine.h"
+#include "Params.h"
 
-// Whisker Scope: the audio passes through untouched. Samples are copied (after the display gain) to lock free rings for the
-// editor, and the meters run on the audio thread.
-class WhiskerScopeProcessor : public juce::AudioProcessor
+// Whisker Scope. The audio goes through a short chain that is bit exact when nothing is switched on:
+//   input gain -> [Mid/Side match EQ, 30 bells per channel, crossfaded] -> auto level + output gain -> safety limiter (only while the
+//   match stage or the output gain is in use) -> out.
+// Samples are copied to lock free rings for the displays, loudness and peaks are measured on the audio thread, and a message thread
+// timer does the slow Shapes work (spectrum bands, capture, matching targets, EQ design).
+class WhiskerScopeProcessor : public juce::AudioProcessor, private juce::Timer
 {
 public:
     WhiskerScopeProcessor();
-    ~WhiskerScopeProcessor() override = default;
+    ~WhiskerScopeProcessor() override;
 
     void prepareToPlay (double sampleRate, int samplesPerBlock) override;
     void releaseResources() override {}
@@ -33,25 +37,115 @@ public:
     static juce::AudioProcessorValueTreeState::ParameterLayout layout();
     juce::AudioProcessorValueTreeState apvts;
 
-    // read by the editor
-    ws::SampleRing ringL, ringR;
-    struct Live
-    {
-        std::atomic<float> peakL { 0 }, peakR { 0 }, peakM { 0 }, peakS { 0 }, lufs { -200 }, corr { 0 }, width { 0 }, balance { 0 }, monoLoss { 0 }, rmsL { 0 }, rmsR { 0 }, rmsM { 0 }, rmsS { 0 }, bpm { 0 };
-        std::atomic<bool> hasSignal { false };
-    } live;
+    //==========================================================================
+    // Read by the editor (message thread), written by the audio thread.
+    ws::SampleRing outL, outR, inL, inR;           // after everything / after input gain, before the match EQ
+    ws::SampleRingSmall scL, scR;                  // sidechain (layer B), after SC gain, never played
+    std::atomic<float> peakOut[2] { { 0.0f }, { 0.0f } }, peakIn[2] { { 0.0f }, { 0.0f } };   // linear peak since the editor last took it
+    ws::LoudnessMeter lufsIn, lufsPre, lufsOut;
+    std::atomic<float> autoDb { 0.0f };
+    std::atomic<bool> autoHeld { false };
+    std::atomic<bool> scEnabled { false }, scSeen { false };
+    std::atomic<float> hostBpm { 0.0f };
+    std::atomic<double> hostPpq { -1.0 };           // quarter note position at the end of the last block, negative when the host does not say
     std::atomic<double> sampleRateNow { 48000.0 };
-    void resetPeaks() { resetPeakFlag.store (true); }
+    std::atomic<bool> muted { false };            // Panic: silences the output until pressed again
+    std::atomic<float> refLufsA { -999.0f };      // loudness stored with the reference, for auto level
+    float takePeak (std::atomic<float>& a) { return a.exchange (0.0f); }
 
-    // shapes, shared by the editor (message thread only)
-    ws::Shape refShape, mineShape; bool hasRef = false, hasMine = false;
-    int page = 1;               // 0 scope, 1 spectrum, 2 stereo, 3 shapes
-    int editorWidth = 1200;
-    bool tooltips = true;
-    static juce::File shapeDir();
+    //==========================================================================
+    // Parameters by id.
+    float param (const char* id) const { return apvts.getRawParameterValue (id)->load(); }
+    int choiceIndex (const char* id) const { return (int) std::lround (param (id)); }
+    const char* choiceRaw (const char* id) const;                    // raw option text, for example "lr" or "8192"
+    double choiceNumber (const char* id) const { return juce::String (choiceRaw (id)).getDoubleValue(); }
+    void setParam (const char* id, float plainValue);                // with a change gesture, for the host
+
+    //==========================================================================
+    // UI state kept with the plugin state
+    int page = 0;                                                    // 0 spectrum, 1 scope, 2 stereo, 3 shapes
+    juce::String presetName { "Init" };
+    int editorWidth = 0;                                             // 0 = default
+
+    //==========================================================================
+    // Shapes (message thread only; the editor and the timer both run there)
+    struct ShapeView
+    {
+        bool hasRef = false, hasMine = false, hasLive = false, hasRes = false, capturing = false, captureIsRef = false, hasRefShown = false;
+        ws::Shape ref, mine;
+        float refShown[2][ws::kBands] {};                            // reference as compared (tilt applied); valid when hasRefShown
+        float live[2][ws::kBands] {}, res[2][ws::kBands] {}, eq[2][ws::kBands] {};   // [0] Mid, [1] Side
+        int captureFrames = 0; double captureSeconds = 0;
+    };
+    const ShapeView& shapes() const { return view; }
+    void setShapesWatched (bool on) { shapesWatched = on; }
+    void startCapture (bool toReference);
+    void stopCapture();                                              // keeps the result when there was enough sound (see takeNote)
+    void cancelCapture();
+    void useAsReference (const ws::Shape& s);
+    void clearReference();
+    void clearMine();
+    void renameReference (const juce::String& n);
+    void shapeParamsChanged() { matchDirty = true; }
+    juce::String takeNote() { auto n = lastNote; lastNote.clear(); return n; }
+
+    // shape library (starting points made by us plus the user's files) and text exchange
+    std::vector<ws::Shape> factoryShapes() const;
+    std::vector<ws::Shape> userShapes() const;
+    bool saveUserShape (const ws::Shape& s);
+    bool deleteUserShape (const juce::String& name);
+    static juce::String shapeToText (const ws::Shape& s);
+    static bool shapeFromText (const juce::String& text, ws::Shape& out);
+    static juce::String cleanName (const juce::String& n);          // letters, digits, space . ( ) + - only, 40 characters at most
+
+    //==========================================================================
+    // Presets: parameter values as JSON, factory list plus user files
+    struct Preset { juce::String name; juce::var state; bool factory = false; };
+    std::vector<Preset> allPresets() const;
+    juce::var currentState() const;                                  // all parameters except colours, and the page
+    void applyState (const juce::var& st);
+    void loadPreset (const juce::String& name);
+    bool saveUserPreset (const juce::String& name);                  // overwrites a user preset of the same name
+    bool userPresetExists (const juce::String& name) const;
+    bool deleteUserPreset (const juce::String& name);
+    bool renameUserPreset (const juce::String& from, const juce::String& to);
+    juce::String presetToText (const juce::String& name) const;
+    bool importPresetText (const juce::String& text, juce::String& newName);
+    juce::String presetBaseJson;                                     // state when the preset was loaded or saved, to show the star
+
+    // folders and global settings (not part of the project)
+    static juce::File dataDir();
+    struct Settings { bool bubbles = true, eco = false; int warnDb = -12; double winScale = 0.0; };
+    static Settings loadSettings();
+    static void saveSettings (const Settings&);
+
+    // for the offline tests and the screenshot tool: run the slow work once, now
+    void runShapesTickNow (double dtSeconds) { shapesTick (dtSeconds); }
 
 private:
-    ws::StereoMeter stereo; ws::Loudness loud; std::atomic<bool> resetPeakFlag { false };
-    float pkL = 0, pkR = 0, pkM = 0, pkS = 0;
+    void timerCallback() override;
+    void shapesTick (double dt);
+    void recomputeMatch();
+    void refreshRefShown();
+    juce::File shapesDir() const { return dataDir().getChildFile ("shapes"); }
+    juce::File presetsDir() const { return dataDir().getChildFile ("presets"); }
+
+    // audio thread state
+    static constexpr int kChunk = 8192;
+    std::vector<float> tmpIn[2], tmpPre[2], tmpOut[2];
+    juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear> inGainSm, outGainSm, autoGainSm, mixSm, muteSm;
+    ws::MidSideEq eq; ws::AutoLevel autoLevel; ws::SafetyLimiter limiter;
+    juce::SpinLock bellLock; float pendBells[2][ws::kBells] {}; std::atomic<unsigned> bellVersion { 1 }; unsigned bellSeen = 0; float audioBells[2][ws::kBells] {};
+    int scQuiet = 1 << 30; double sr = 48000.0; bool eqWasOn = false;
+    std::atomic<float>* pGain = nullptr; std::atomic<float>* pScGain = nullptr; std::atomic<float>* pOut = nullptr; std::atomic<float>* pHear = nullptr;
+
+    // shapes (message thread; shapeLock protects what getStateInformation reads)
+    mutable juce::CriticalSection shapeLock;
+    ShapeView view; ws::Spectrum spM, spS, spRM, spRS; double analysedRate = 0;
+    std::vector<float> bufA, bufB, bufM, bufS;
+    double capAccM[ws::kBands] {}, capAccS[ws::kBands] {}, capLufsE = 0; int capFrames = 0, capLufsN = 0; double capStart = 0, capLimit = 0; bool capToRef = false, capturing = false;
+    bool shapesWatched = false; double matchClock = 0, lastTickSeconds = 0; float matchKey[6] { -1, -1, -1, -1, -1, -1 }; bool matchDirty = true;
+    juce::String lastNote;
+
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (WhiskerScopeProcessor)
 };

@@ -177,7 +177,7 @@ a.btn[aria-disabled="true"] { opacity:.45; pointer-events:none; }
         <div class="ro" id="ro2"></div>
       </aside>
     </section>
-    <footer class="foot"><span><b>Studio 87</b> &middot; Whisker Scope v0.1 design mockup</span><span id="sizeT" data-tip="Window size. Drag any edge or corner of the plugin to resize it; the shape stays the same. Double-click here for 100 %.">Window 100 %</span><span id="cpuT">Free and open source. Collects nothing.</span></footer>
+    <footer class="foot"><span><b>Studio 87</b> &middot; Whisker Scope v0.2</span><span id="sizeT" data-tip="Window size. Drag any edge or corner of the plugin to resize it; the shape stays the same. Double-click here for 100 %.">Window 100 %</span><span></span></footer>
   </div>
   <div class="cheek r"></div>
 </div>
@@ -948,7 +948,7 @@ function syncLib() {
   mkKnob(g3, { id: "shOut", label: "Output", min: -24, max: 24, step: 0.1, fmt: fmtDb, tip: "Level out of the plugin, after the EQ and the auto level." });
   mkSel(g3, "shAuto", "Auto level", [["off", "Off"], ["in", "Keep my loudness"], ["ref", "Match reference"]], "Off: only the Output knob sets the level. Keep my loudness: the EQ never makes the sound louder or quieter than what comes in, so you judge tone, not volume. Match reference: output loudness follows the loudness captured with the reference (needs a captured or saved reference that has loudness).");
   stat(g3, "autoSt");
-  btn(g3, "", "Copy EQ points", "Copy EQ points", "Copies the suggested gain at ten frequencies for Mid and Side, to type into any EQ.", function () { var lines = []; ["m", "s"].forEach(function (ch) { lines.push((ch === "m" ? "Mid" : "Side") + " EQ:"); EQC.forEach(function (fc) { var g = interpEq(EQ[ch], fc); lines.push("  " + (fc >= 1000 ? fc / 1000 + " kHz" : fc + " Hz") + ": " + (g >= 0 ? "+" : "") + g.toFixed(1) + " dB"); }); }); copyText(lines.join("\n"), "The EQ points"); });
+  btn(g3, "", "Copy EQ points", "Copy EQ points", "Copies the EQ bells (frequency, gain, Q) for Mid and Side, to type into any EQ.", function () { var lines = []; ["m", "s"].forEach(function (ch) { lines.push((ch === "m" ? "Mid" : "Side") + " EQ:"); EQC.forEach(function (fc) { var g = interpEq(EQ[ch], fc); lines.push("  " + (fc >= 1000 ? fc / 1000 + " kHz" : fc + " Hz") + ": " + (g >= 0 ? "+" : "") + g.toFixed(1) + " dB"); }); }); copyText(lines.join("\n"), "The EQ points"); });
   var sg = document.createElement("div"); sg.id = "sugg"; sg.style.cssText = "flex:1 0 100%;font-size:14px;letter-spacing:.03em;line-height:1.4"; g3.appendChild(sg); syncLib(); updateSugg(); updCap();
 })();
 function updSt() {
@@ -1058,7 +1058,7 @@ $("#bSet").addEventListener("click", function () {
   var p = document.createElement("p"); p.textContent = "Settings and presets are kept in this browser only. Nothing is sent anywhere."; w.appendChild(p);
   openModal("Settings", [w]);
 });
-var SUPPORT = { kofi: "studio87", github: "" };
+var SUPPORT = { kofi: "" /* Ko-fi page name goes here once it exists */, github: "" };
 $("#bAbout").addEventListener("click", function () {
   var links = document.createElement("div"); links.className = "row"; links.style.justifyContent = "flex-start";
   var a = document.createElement("a"); a.className = "btn"; a.textContent = "Support on Ko-fi"; if (SUPPORT.kofi) { a.href = "https://ko-fi.com/" + SUPPORT.kofi; a.target = "_blank"; a.rel = "noopener noreferrer"; } else a.setAttribute("aria-disabled", "true"); links.appendChild(a);

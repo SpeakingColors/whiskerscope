@@ -1,0 +1,474 @@
+{
+ "key": "ws",
+ "top": [
+  {
+   "n": 1,
+   "name": "Previous preset",
+   "tip": "Previous preset."
+  },
+  {
+   "n": 2,
+   "name": "Next preset",
+   "tip": "Next preset."
+  },
+  {
+   "n": 3,
+   "name": "Save preset",
+   "tip": "Save the current settings as your own preset (stays on this device)."
+  },
+  {
+   "n": 4,
+   "name": "More",
+   "tip": "Rename, delete, export or import presets."
+  },
+  {
+   "n": 5,
+   "name": "Panic",
+   "tip": "PANIC: mutes the output at once, cancels any capture and turns the matching EQ off. Press again to unmute. Shortcut: P."
+  },
+  {
+   "n": 6,
+   "name": "Guide",
+   "tip": "Quick guide: what each view and control does."
+  },
+  {
+   "n": 7,
+   "name": "Settings",
+   "tip": "Info bubbles, colours, power saving, meter warning level, window size."
+  },
+  {
+   "n": 8,
+   "name": "About & Support",
+   "tip": "About Studio 87, privacy, installing, and ways to support the project."
+  },
+  {
+   "n": 9,
+   "name": "Input gain",
+   "tip": "Boosts or cuts the level going into the plugin. The displays, the meters and the matching EQ all follow it. Double-click resets."
+  },
+  {
+   "n": 10,
+   "name": "SC gain",
+   "tip": "Level of the sidechain (layer B) signal that the displays see. It is never played. Double-click resets."
+  },
+  {
+   "n": 11,
+   "name": "Colours",
+   "tip": "Colour scheme for all displays."
+  },
+  {
+   "n": 12,
+   "name": "Spectrum",
+   "tip": "Spectrum analyser with optional waterfall. Shortcut: 1."
+  },
+  {
+   "n": 13,
+   "name": "Scope",
+   "tip": "Waveform scope. Shortcut: 2."
+  },
+  {
+   "n": 14,
+   "name": "Stereo field",
+   "tip": "Stereo field: goniometer, phase correlation and mono check. Shortcut: 3."
+  },
+  {
+   "n": 15,
+   "name": "Shapes",
+   "tip": "Freeze the spectrum shape of a song or lead, save it, and see the EQ that moves your sound toward it. Shortcut: 4."
+  }
+ ],
+ "items": [
+  {
+   "title": "Spectrum",
+   "img": "ws_p1.png",
+   "letter": "A",
+   "items": [
+    {
+     "n": 19,
+     "kind": "menu",
+     "name": "Analyse",
+     "tip": "Which signal the analyser looks at. Stereo (left and right) and Mid / Side draw two curves.",
+     "value": "Stereo"
+    },
+    {
+     "n": 20,
+     "kind": "menu",
+     "name": "FFT size",
+     "tip": "Bigger sizes separate bass notes better but react slower.",
+     "value": "8192"
+    },
+    {
+     "n": 21,
+     "kind": "menu",
+     "name": "Speed",
+     "tip": "How quickly the curve follows the sound.",
+     "value": "Medium"
+    },
+    {
+     "n": 22,
+     "kind": "menu",
+     "name": "Range",
+     "tip": "How many dB below 0 dBFS the display shows.",
+     "value": "90 dB"
+    },
+    {
+     "n": 23,
+     "kind": "menu",
+     "name": "Slope",
+     "tip": "Tilts the curve up toward the highs so a typical mix looks flat. Pivot is 1 kHz. 4.5 dB/oct is the default, the same value other analysers use.",
+     "value": "4.5 dB/oct"
+    },
+    {
+     "n": 24,
+     "kind": "menu",
+     "name": "Label speed",
+     "tip": "How often the peak labels refresh. Slower is easier to read.",
+     "value": "Slow"
+    },
+    {
+     "n": 25,
+     "kind": "menu",
+     "name": "Peak labels",
+     "tip": "Shows the peak level and the pitch (Hz and note) right on the scope. 0 hides them.",
+     "value": "3"
+    },
+    {
+     "n": 26,
+     "kind": "menu",
+     "name": "Masking",
+     "tip": "With a sidechain (layer B) playing: marks the frequency ranges where A and B are both loud and within this many dB of each other, a sign that they may mask each other. Rule of thumb, check by ear.",
+     "value": "Within 6 dB"
+    },
+    {
+     "n": 27,
+     "kind": "menu",
+     "name": "Bands",
+     "tip": "Full shows every detail. Octave bands show how an equaliser would see it.",
+     "value": "Full"
+    },
+    {
+     "n": 28,
+     "kind": "menu",
+     "name": "Scale",
+     "tip": "Log spaces the octaves evenly. Linear spaces the Hz evenly.",
+     "value": "Log"
+    },
+    {
+     "n": 29,
+     "kind": "button",
+     "name": "Fill",
+     "tip": "Switches between a filled spectrum and a thin line.",
+     "value": "on"
+    },
+    {
+     "n": 30,
+     "kind": "button",
+     "name": "Waterfall",
+     "tip": "Draws the history of the spectrum as colours scrolling away.",
+     "value": "off"
+    },
+    {
+     "n": 31,
+     "kind": "button",
+     "name": "Rotate",
+     "tip": "Turns the waterfall sideways: time runs left, frequency runs up.",
+     "value": "off"
+    },
+    {
+     "n": 32,
+     "kind": "button",
+     "name": "Peak hold",
+     "tip": "Keeps a thin line at the loudest value each frequency reached.",
+     "value": "on"
+    },
+    {
+     "n": 33,
+     "kind": "button",
+     "name": "Peak reset",
+     "tip": "Clears the held peaks and the clip light. Shortcut: R.",
+     "value": "off"
+    },
+    {
+     "n": 34,
+     "kind": "button",
+     "name": "Freeze",
+     "tip": "Holds the spectrum picture. Shortcut: F.",
+     "value": "off"
+    }
+   ]
+  },
+  {
+   "title": "Scope",
+   "img": "ws_p2.png",
+   "letter": "B",
+   "items": [
+    {
+     "n": 37,
+     "kind": "menu",
+     "name": "Channels",
+     "tip": "Which channels are drawn. Mid is (L+R)/2, Side is (L-R)/2.",
+     "value": "Stereo"
+    },
+    {
+     "n": 38,
+     "kind": "menu",
+     "name": "Sync",
+     "tip": "Free: always shows the latest audio. Trigger: locks on a rising edge so repeating waves hold still. Frequency: fixed Hz you set. Pitch: follows the detected pitch. Beat: window follows the host tempo.",
+     "value": "Free"
+    },
+    {
+     "n": 35,
+     "kind": "knob",
+     "name": "Time",
+     "tip": "How much time fits on the screen (1 ms to 400 ms). Double-click resets.",
+     "value": "60"
+    },
+    {
+     "n": 36,
+     "kind": "knob",
+     "name": "Trig level",
+     "tip": "Level the Trigger mode waits for before starting the sweep. Double-click resets.",
+     "value": "0"
+    },
+    {
+     "n": 39,
+     "kind": "menu",
+     "name": "Label speed",
+     "tip": "How often the peak labels refresh. Slower is easier to read.",
+     "value": "Slow"
+    },
+    {
+     "n": 40,
+     "kind": "menu",
+     "name": "Peak label",
+     "tip": "Shows the peak level and the pitch (Hz and note) right on the scope. 0 hides them.",
+     "value": "3"
+    },
+    {
+     "n": 41,
+     "kind": "button",
+     "name": "Transients",
+     "tip": "Starts the window on the latest sudden loud event, handy for kicks and plucks.",
+     "value": "off"
+    },
+    {
+     "n": 42,
+     "kind": "button",
+     "name": "Freeze",
+     "tip": "Holds the scope picture. Meters keep moving. Shortcut: F.",
+     "value": "off"
+    }
+   ]
+  },
+  {
+   "title": "Stereo field",
+   "img": "ws_p3.png",
+   "letter": "C",
+   "items": [
+    {
+     "n": 43,
+     "kind": "knob",
+     "name": "Persistence",
+     "tip": "How long the dots leave a trail. More trail shows the shape of the sound over time. Double-click resets.",
+     "value": "0.6"
+    },
+    {
+     "n": 44,
+     "kind": "knob",
+     "name": "Zoom",
+     "tip": "Magnifies the picture so quiet material becomes visible. Double-click resets.",
+     "value": "1"
+    },
+    {
+     "n": 45,
+     "kind": "button",
+     "name": "Freeze",
+     "tip": "Holds the picture. Shortcut: F.",
+     "value": "off"
+    }
+   ]
+  },
+  {
+   "title": "Shapes",
+   "img": "ws_p4.png",
+   "letter": "D",
+   "items": [
+    {
+     "n": 48,
+     "kind": "button",
+     "name": "Capture reference",
+     "tip": "Play the song or lead you want to sound like, press this, let it play, then press again. Its average spectrum shape and loudness are frozen as the reference.",
+     "value": "off"
+    },
+    {
+     "n": 46,
+     "kind": "menu",
+     "name": "Shape library",
+     "tip": "Starting-point shapes plus the ones you saved.",
+     "value": "Gentle tilt (-3 dB/oct)"
+    },
+    {
+     "n": 51,
+     "kind": "button",
+     "name": "Use as reference",
+     "tip": "Loads the chosen shape as the target.",
+     "value": "off"
+    },
+    {
+     "n": 52,
+     "kind": "button",
+     "name": "Save reference as",
+     "tip": "Keeps the current reference (shape and loudness) in your shape library on this device.",
+     "value": "off"
+    },
+    {
+     "n": 53,
+     "kind": "button",
+     "name": "Manage shapes",
+     "tip": "Delete a saved shape, export the reference as text, or import a shape you were sent.",
+     "value": "off"
+    },
+    {
+     "n": 54,
+     "kind": "button",
+     "name": "Reference on",
+     "tip": "Switches the reference off without losing it: the comparison and the matching EQ stop, the shape stays stored. Turn it back on any time.",
+     "value": "on"
+    },
+    {
+     "n": 55,
+     "kind": "button",
+     "name": "Rename reference",
+     "tip": "Gives the current reference a name of your choice.",
+     "value": "off"
+    },
+    {
+     "n": 56,
+     "kind": "button",
+     "name": "Clear reference",
+     "tip": "Removes the reference. Mine, the EQ settings and everything else stay. Save it first (Save as) if you want to keep it.",
+     "value": "off"
+    },
+    {
+     "n": 57,
+     "kind": "menu",
+     "name": "Ref tilt",
+     "tip": "Edits the reference: tilts its brightness around 1 kHz, for example to make a dark reference a bit brighter. 0 leaves it as it is.",
+     "value": "0 (as is)"
+    },
+    {
+     "n": 49,
+     "kind": "button",
+     "name": "Capture mine",
+     "tip": "Play your own sound, press this, let it play, then press again. Its shape is frozen so you can compare while you move on.",
+     "value": "off"
+    },
+    {
+     "n": 50,
+     "kind": "button",
+     "name": "Clear mine",
+     "tip": "Forget the captured shape of your sound and compare the live sound again.",
+     "value": "off"
+    },
+    {
+     "n": 47,
+     "kind": "menu",
+     "name": "Capture length",
+     "tip": "How long a capture averages the sound.",
+     "value": "Until stop"
+    },
+    {
+     "n": 58,
+     "kind": "menu",
+     "name": "Show",
+     "tip": "Which half of the sound the graph shows. Mid is the centre (kick, bass, lead), Side is what is wide. Both halves are always matched.",
+     "value": "Mid"
+    },
+    {
+     "n": 59,
+     "kind": "menu",
+     "name": "EQ smoothing",
+     "tip": "Wider smoothing gives gentler, more musical EQ moves.",
+     "value": "1/3 oct"
+    },
+    {
+     "n": 60,
+     "kind": "knob",
+     "name": "Strength",
+     "tip": "How much of the difference to correct. 100 % tries to copy the reference exactly, 50 % goes halfway. Double-click resets.",
+     "value": "0.7"
+    },
+    {
+     "n": 61,
+     "kind": "knob",
+     "name": "Max move",
+     "tip": "No EQ move is allowed to be bigger than this. Double-click resets.",
+     "value": "9"
+    },
+    {
+     "n": 65,
+     "kind": "button",
+     "name": "EQ on",
+     "tip": "Turns the matching EQ on or off so you can A/B. With Auto level on, the loudness stays the same, so you hear only the tone change. The EQ is 30 bells for Mid and 30 for Side, a third of an octave apart.",
+     "value": "on"
+    },
+    {
+     "n": 62,
+     "kind": "knob",
+     "name": "Input",
+     "tip": "Level into the plugin (same knob as the Input gain at the top). Double-click resets.",
+     "value": "0"
+    },
+    {
+     "n": 63,
+     "kind": "knob",
+     "name": "Output",
+     "tip": "Level out of the plugin, after the EQ and the auto level. Double-click resets.",
+     "value": "0"
+    },
+    {
+     "n": 64,
+     "kind": "menu",
+     "name": "Auto level",
+     "tip": "Off: only the Output knob sets the level. Keep my loudness: the EQ never makes the sound louder or quieter than what comes in, so you judge tone, not volume. Match reference: output loudness follows the loudness captured with the reference (needs a captured or saved reference that has loudness).",
+     "value": "Keep my loudness"
+    },
+    {
+     "n": 66,
+     "kind": "button",
+     "name": "Copy EQ points",
+     "tip": "Copies the matching EQ as a list of bells (frequency, gain, Q) for Mid and Side, to type into any EQ.",
+     "value": "off"
+    }
+   ]
+  },
+  {
+   "title": "Meters",
+   "img": "ws_p5.png",
+   "letter": "E",
+   "items": [
+    {
+     "n": 16,
+     "kind": "menu",
+     "name": "Metering",
+     "tip": "Which level the bars show. Peak is the loudest moment, RMS is the average level, Loudness (LUFS) is how loud it sounds (momentary, short-term and integrated, K-weighted as in streaming and broadcast meters).",
+     "value": "Peak + RMS"
+    },
+    {
+     "n": 17,
+     "kind": "menu",
+     "name": "RMS length",
+     "tip": "Averaging time of the RMS meter. Longer is calmer and closer to perceived loudness.",
+     "value": "300 ms"
+    },
+    {
+     "n": 18,
+     "kind": "button",
+     "name": "Peak reset",
+     "tip": "Clears held peaks, the clip light and the crest figure. Shortcut: R.",
+     "value": "off"
+    }
+   ]
+  }
+ ]
+}

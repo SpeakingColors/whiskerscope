@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Builds the short PDF manual from docs/manual.txt. Usage: python3 tools/make_manual.py <ignored> <docs/manual.txt> <out.pdf>
 (The first argument is kept so the release workflow can call every Studio 87 plugin the same way.) Needs: pip install reportlab"""
-import sys
+import os, sys
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import ParagraphStyle
@@ -33,5 +33,10 @@ for title, lines in sections:
         elif l.strip() == "": flush_text(); flush_items()
         else: flush_items() if False else None; buf.append(l.strip())
     flush_text(); flush_items()
+_tdir = os.path.join(os.path.dirname(os.path.abspath(txt)), "tour")
+if os.path.exists(os.path.join(_tdir, "key.txt")):
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    from tour_pages import tour_story
+    story += tour_story(_tdir, open(os.path.join(_tdir, "key.txt")).read().strip(), h2, body, esc)
 doc.build(story)
 print("wrote", out)

@@ -1,0 +1,20 @@
+{
+ "ws": {
+  "flow": "Input (your track) > Input gain > Mid/Side match EQ (Shapes page, off until you switch EQ on) > Auto level and Output gain > safety limiter > output. The displays and meters only read the audio; with everything at default the sound passes through bit for bit. The sidechain input (layer B) is read only for the yellow traces and the masking view; it is never added to the output.",
+  "displays": {
+   "A": "Spectrum. Horizontal axis: frequency, 20 Hz to 20 kHz (log or linear with Scale). Vertical axis: level in dBFS (range 60, 90 or 120 dB, default 90 dB). Teal and pink are the left and right channels, white is the peak hold line, yellow is the sidechain (layer B). Red bands show where A and B are within the Masking distance of each other, which is where they may mask each other. The labels name the loudest peaks with note names.",
+   "B": "Scope. Horizontal axis: time (the Time knob, 60 ms in the picture). Vertical axis: level in dB around the centre line, so quiet sound is still visible. Teal is left, pink is right, yellow is the sidechain. Sync modes keep the picture still: Free, Trigger, Frequency, Pitch and Beat (follows the host tempo). Transients marks hits with vertical lines.",
+   "C": "Stereo field (vectorscope). Vertical axis: Mono (M), the sound both channels share. Horizontal axis: Side. Left and Right are the diagonals; Antiphase is the bottom. A narrow vertical shape is mono, a wide cloud is stereo, anything below the centre line points to phase trouble. The rings mark 0, -6 and -12 dB. Persistence controls how long the trail stays, Zoom magnifies quiet sound.",
+   "D": "Shapes. Top graph: average spectrum shape in dB relative to its own average (horizontal 20 Hz to 20 kHz). Yellow is the reference, dashed aqua is yours, white dots are yours after the EQ. Bottom graph: the EQ that moves yours toward the reference, in dB (pink cuts, teal boosts), limited by Max move. The label in the corner shows Mid or Side.",
+   "E": "Level meters for the left and right channel in dBFS (peak with hold line, RMS in the body), clip light, and the readouts for peak, RMS, crest factor and held peak. Below: the correlation meter (-1 antiphase, +1 mono), stereo width, balance, mono loss in dB and a verdict (MONO SAFE and so on)."
+  },
+  "deep": [
+   "Everything you see is read from a copy of the audio. The audio path itself is untouched unless you turn on the matching EQ, use Output gain, or press Panic.",
+   "The matching EQ is a Mid/Side EQ made of 30 peaking bells per channel (Q 2.5). The Shapes analysis runs about 20 times per second on the interface thread, never in the audio callback. Strength scales the EQ, Max move limits each bell, EQ on bypasses it.",
+   "Auto level keeps your loudness (the EQ is not allowed to make the sound louder or quieter) or matches the loudness captured with the reference. A safety limiter at the end stops a wrong setting from sending a huge level to your speakers. Panic mutes the output.",
+   "The spectrum uses an FFT of 2048 to 32768 points with a Blackman window; larger sizes resolve low notes better and react slower. The sidechain is the second input bus; if your host does not route anything there, the yellow traces stay off.",
+   "Every knob, menu and switch is an automatable plugin parameter. Presets and saved shapes are plain files in the Studio 87 / Whisker Scope folder of your user data; nothing is sent anywhere.",
+   "The window keeps its shape and scales from 25 % to 250 %. Drag any edge or corner, or double-click a wooden side for the default size."
+  ]
+ }
+}

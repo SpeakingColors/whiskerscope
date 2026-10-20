@@ -1,6 +1,6 @@
 # Intro
 
-Whisker Scope shows what your sound is doing: its waveform, its frequencies, how wide it is, and how close it is to a sound you want to match. It never changes the sound. The audio goes through untouched, and everything you see is measured from a copy.
+Whisker Scope shows what your sound is doing: its waveform, its frequencies, how wide it is, and how close it is to a sound you want to match. Everything you see is measured from a copy of the audio. The sound goes through untouched unless you use Input gain, turn on the matching EQ on the Shapes page, use Output gain, or press Panic.
 
 It is free and open source, made by Studio 87. It collects nothing and works fully offline.
 
@@ -9,7 +9,7 @@ It is free and open source, made by Studio 87. It collects nothing and works ful
 - Put Whisker Scope on the track or the master you want to look at. Play something.
 - Pick a page at the top: Scope, Spectrum, Stereo field or Shapes.
 - Hover the Spectrum to read the frequency, the note and the level under the mouse.
-- Display gain only changes what you see and measure, not what you hear.
+- Input gain changes the level going into the plugin: the sound, the displays and the meters all follow it. SC gain only changes what you see of the sidechain.
 - Hover any control for one second to read what it does. Settings can turn those bubbles off.
 
 # Scope
@@ -29,15 +29,24 @@ The goniometer shows where the sound sits between left and right. Straight up is
 Shapes compares the average spectrum of a reference (a song, a lead you love) with your own sound, on 60 bands of 1/6 octave from 20 Hz, Mid and Side kept apart.
 - Press Capture reference, play the reference, press the button again. Only moments with signal are averaged.
 - Press Capture mine and do the same with your sound. Without it, the live spectrum is compared.
-- The orange curve is the EQ that moves your sound toward the reference. Both shapes are first levelled to their own average, so loudness does not matter, only the balance of frequencies.
+- The bars at the bottom are the EQ that moves your sound toward the reference (pink cuts, teal boosts). Both shapes are first levelled to their own average, so loudness does not matter, only the balance of frequencies.
 - Strength scales the curve. Max move limits the largest boost or cut.
+- EQ on turns the matching Mid/Side EQ on in the audio path, so you can hear it. It is 30 bells per channel and every control is automatable. Auto level keeps your loudness or matches the loudness stored with the reference. Input and Output set the level around the EQ. A safety limiter sits at the very end.
 - Save shape, Load shape, Copy shape text and Paste shape text keep and share shapes. Bad text is refused.
 - The three starting points are made by us and are not measured from any song.
-- Copy EQ points copies the suggestion as a list of frequencies and gains for your own EQ.
+- Copy EQ points copies the bells (frequency, gain, Q) for Mid and Side, to type into any other EQ.
+
+# Sidechain layer (masking)
+
+Route a second track into the plugin's sidechain input in your host (layer B). It is drawn in yellow on the Spectrum, Scope and Stereo field and is never added to the output. On the Spectrum, Masking marks in red the frequency ranges where your track and the sidechain track are within the chosen distance (3, 6 or 10 dB) of each other, which is where they may mask each other. SC gain only changes what you see.
+
+# Window
+
+Drag any edge or corner to resize; the shape stays the same (25 % to 250 %). Double-click a wooden side for the default size. The size is remembered.
 
 # Levels
 
-Bars show RMS for left, right, mid and side. The white line is the held peak. Peak reset clears it. Momentary loudness is K weighted over 400 ms. It is a monitor, not a certified loudness meter.
+On the right: level bars for left and right (IN and OUT on the Shapes page) with peak and RMS readouts, crest factor, a held peak (Peak reset clears it) and the CLIP light. Metering and RMS length choose how they react. Below them are correlation, width, balance, mono loss and the Mono safe verdict. These are monitors, not certified meters.
 
 # Recommendations
 
