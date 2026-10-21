@@ -109,5 +109,75 @@ int main()
         for (int i = 100; i < 300000; ++i) { r.push((float) (i % 1000)); }
         r.latest(o, 10); NEAR(o[9], 299999 % 1000, 0); CHECK(r.written() == 300000);
     }
+    {   // key detector on synthetic chord progressions (a lone triad is ambiguous with its relative key, so progressions are used)
+        auto midiHz = [](int m) { return 440.0 * std::pow(2.0, (m - 69) / 12.0); };
+        auto chordSig = [&](const std::vector<std::vector<int>>& chords, double secPer, double fs, int loops) {
+            std::vector<float> v; const int per = (int) (secPer * fs);
+            for (int l = 0; l < loops; ++l) for (auto& ch : chords) for (int i = 0; i < per; ++i) {
+                double a = 0; for (int m : ch) for (int h = 1; h <= 3; ++h) a += std::sin(2 * kPi * midiHz(m) * h * i / fs) / h;
+                v.push_back((float) (0.08 * a)); }
+            return v; };
+        auto detect = [&](const std::vector<float>& x, double fs, double* secondsToName = nullptr) {
+            KeyDetector kd; const int hop = (int) (fs * 0.1); double t = 0, named = -1;
+            for (int p = 0; p + KeyDetector::kFftSize <= (int) x.size(); p += hop) { kd.process(x.data() + p, fs, 0.1); t += 0.1; if (named < 0 && kd.result().tonic >= 0) named = t; }
+            if (secondsToName) *secondsToName = named;
+            return kd.result(); };
+        for (double fs : { 48000.0, 44100.0 })
+        {
+            // C major: C F G C chords (C4 = 60)
+            auto cmaj = chordSig({ { 48, 60, 64, 67 }, { 53, 65, 69, 72 }, { 55, 67, 71, 74 }, { 48, 60, 64, 67 } }, 2.0, fs, 3);
+            double named = 0; KeyResult r = detect(cmaj, fs, &named);
+            CHECK(r.tonic == 0 && !r.minor); CHECK(keyName(r) == "C major"); CHECK(camelotOf(r) == "8B"); CHECK(r.confidence > 0.6f); CHECK(!r.listening); CHECK(named >= KeyDetector::kNeedSeconds - 0.01);
+            // A minor with the raised seventh: Am Dm E Am
+            auto amin = chordSig({ { 45, 57, 60, 64 }, { 50, 62, 65, 69 }, { 52, 64, 68, 71 }, { 45, 57, 60, 64 } }, 2.0, fs, 3);
+            r = detect(amin, fs); CHECK(r.tonic == 9 && r.minor); CHECK(keyName(r) == "A minor"); CHECK(camelotOf(r) == "8A");
+            // D major: D G A D, F# minor: F#m Bm C#(major) F#m
+            auto dmaj = chordSig({ { 50, 62, 66, 69 }, { 55, 67, 71, 74 }, { 57, 69, 73, 76 }, { 50, 62, 66, 69 } }, 2.0, fs, 3);
+            r = detect(dmaj, fs); CHECK(r.tonic == 2 && !r.minor); CHECK(camelotOf(r) == "10B");
+            auto fsm = chordSig({ { 54, 66, 69, 73 }, { 59, 71, 74, 78 }, { 61, 73, 77, 80 }, { 54, 66, 69, 73 } }, 2.0, fs, 3);
+            r = detect(fsm, fs); CHECK(r.tonic == 6 && r.minor); CHECK(camelotOf(r) == "11A");
+        }
+        {   // a lone C major triad: the answer is C major or its relative A minor, never anything else
+            auto tri = chordSig({ { 48, 60, 64, 67 } }, 12.0, 48000, 1); KeyResult r = detect(tri, 48000);
+            CHECK((r.tonic == 0 && !r.minor) || (r.tonic == 9 && r.minor));
+            CHECK(!r.ambiguous || r.altTonic != r.tonic);
+        }
+        {   // silence and noise: no key. Loud drums only (noise bursts) too.
+            std::vector<float> z(48000 * 12, 0.0f); KeyResult r = detect(z, 48000); CHECK(r.tonic < 0); CHECK(r.listening);
+            std::vector<float> nz(48000 * 12); uint32_t seed = 12345; for (auto& v : nz) { seed = seed * 1664525u + 1013904223u; v = 0.2f * ((seed >> 8) / 8388608.0f - 1.0f); }
+            r = detect(nz, 48000); CHECK(r.tonic < 0);
+            std::vector<float> sw(48000 * 12); { double ph = 0; for (size_t i = 0; i < sw.size(); ++i) { const double f = 20.0 * std::pow(1000.0, (double) i / sw.size()); ph += 2 * kPi * f / 48000; sw[i] = (float) (0.3 * std::sin(ph)); } }
+            r = detect(sw, 48000); CHECK(r.tonic < 0);
+        }
+        {   // hold semantics live in the caller; reset clears the memory
+            KeyDetector kd; auto cmaj = chordSig({ { 48, 60, 64, 67 }, { 53, 65, 69, 72 }, { 55, 67, 71, 74 }, { 48, 60, 64, 67 } }, 2.0, 48000, 2);
+            for (int p = 0; p + KeyDetector::kFftSize <= (int) cmaj.size(); p += 4800) kd.process(cmaj.data() + p, 48000, 0.1);
+            CHECK(kd.result().tonic == 0); kd.reset(); CHECK(kd.result().tonic < 0); CHECK(kd.result().listening);
+        }
+        // names
+        KeyResult k; k.tonic = 3; k.minor = true; CHECK(keyName(k) == "Eb minor"); CHECK(camelotOf(k) == "2A"); k.minor = false; CHECK(camelotOf(k) == "5B"); CHECK(camelotOf(KeyResult()) == "");
+    }
+    {   // reference file analysis: tone level, Mid/Side split, silence skipped, short input refused, level steps of 6 dB
+        const double fs = 48000; const int n = (int) (fs * 6);
+        auto run = [&](const std::vector<float>& l, const std::vector<float>* r, Shape& out) { ShapeAccumulator a; a.prepare(fs);
+            for (size_t p = 0; p < l.size(); p += 1000) { int c = (int) std::min<size_t>(1000, l.size() - p); a.push(l.data() + p, r ? r->data() + p : nullptr, c); }
+            bool ok = a.finish(out); return std::make_pair(ok, a.usedFrames()); };
+        auto bandOf = [](double hz) { return (int) std::floor(6.0 * std::log2(hz / 20.0)); };
+        Shape a, b, c, d; auto x = sine(1000, 0.5, fs, n); auto hx = sine(1000, 0.25, fs, n);
+        auto ra = run(x, nullptr, a); auto rb = run(hx, nullptr, b);
+        CHECK(ra.first && rb.first); const int kb = bandOf(1000); CHECK(a.m[kb] > -30.0f); NEAR(a.m[kb] - b.m[kb], 6.02, 0.3);
+        CHECK(a.s[kb] < -100.0f);                                   // identical L and R: no Side
+        std::vector<float> zero(n, 0.0f); run(x, &zero, c);          // left only: Mid and Side are equal
+        NEAR(c.m[kb], c.s[kb], 0.3); NEAR(c.m[kb], a.m[kb] - 6.02, 0.3);
+        std::vector<float> ph(n); for (int i = 0; i < n; ++i) ph[(size_t) i] = -x[(size_t) i]; run(x, &ph, d);   // opposite phase: all Side
+        CHECK(d.m[kb] < -100.0f); NEAR(d.s[kb], a.m[kb], 0.3);
+        // 6 s of silence before the tone changes nothing
+        std::vector<float> sil((size_t) n, 0.0f), xs = sil; xs.insert(xs.end(), x.begin(), x.end()); Shape e; auto re2 = run(xs, nullptr, e);
+        NEAR(e.m[kb], a.m[kb], 0.3); CHECK(re2.second <= ra.second + 1);
+        // pure silence and a too short file are refused
+        Shape f; auto rf = run(sil, nullptr, f); CHECK(!rf.first);
+        std::string why; CHECK(!audioInfoOk(48000, 2, 48000.0 * 1.5, why) && !why.empty()); CHECK(audioInfoOk(44100, 2, 44100.0 * 30, why) && why.empty());
+        CHECK(!audioInfoOk(100, 2, 1e6, why)); CHECK(!audioInfoOk(48000, 0, 1e6, why)); CHECK(!audioInfoOk(48000, 2, 48000.0 * 3700, why)); CHECK(!audioInfoOk(NAN, 2, 1e6, why));
+    }
     std::printf(fails ? "%d checks FAILED\n" : "all engine checks passed\n", fails); return fails ? 1 : 0;
 }

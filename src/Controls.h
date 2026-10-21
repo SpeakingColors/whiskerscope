@@ -61,6 +61,22 @@ private:
     juce::String text; const Palette& pal; juce::Colour fixedColour;
 };
 
+// Progress bar plus text, shown in place of the reference status line while a reference file is analysed.
+class FileProgress : public juce::Component
+{
+public:
+    explicit FileProgress (const Palette& p) : pal (p) { setSize (100, 16); setInterceptsMouseClicks (false, false); }
+    void set (float f, const juce::String& t) { if (std::abs (f - frac) > 0.0005f || t != text) { frac = f; text = t; repaint(); } }
+    void paint (juce::Graphics& g) override
+    {
+        const juce::Rectangle<float> r (0.5f, 3.5f, 220.0f, 9.0f); g.setColour (juce::Colour (0xff0a0a0c)); g.fillRoundedRectangle (r, 4.5f); g.setColour (col::line); g.drawRoundedRectangle (r, 4.5f, 1.0f);
+        g.setColour (pal->acc); g.fillRoundedRectangle (juce::Rectangle<float> (1.5f, 4.5f, juce::jmax (7.0f, 218.0f * frac), 7.0f), 3.5f);
+        mtxt (g, text, 232.0f, 12.0f, pal->acc, juce::Justification::left, 12.0f);
+    }
+private:
+    const Palette& pal; float frac = 0.0f; juce::String text;
+};
+
 // Text with **bold** parts, wrapped to a width.
 class TextBlock : public juce::Component
 {

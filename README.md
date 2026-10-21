@@ -2,7 +2,7 @@
 
 A scope, spectrum and frequency analyzer that had too much catnip at lunch.
 
-Free and open source analyser plugin (VST3 and Standalone) from Studio 87. v0.2.0 has the real editor built from the approved mockup. It has been built and checked by CI (pluginval) but has not been tested by hand in a DAW or on macOS yet.
+Free and open source analyser plugin (VST3 and Standalone) from Studio 87. v0.3.0 adds a key detector on the Spectrum and reference files with reference presets on Shapes. v0.2.0 has the real editor built from the approved mockup. It has been built and checked by CI (pluginval) but has not been tested by hand in a DAW or on macOS yet.
 
 ## What exists
 - Scope, Spectrum, Stereo field and Shapes views, resizable window (fixed shape, all edges and corners, 25 % to 250 %)

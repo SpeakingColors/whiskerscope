@@ -1,5 +1,6 @@
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
+#include <juce_audio_formats/juce_audio_formats.h>
 
 using APF = juce::AudioParameterFloat; using APC = juce::AudioParameterChoice; using APB = juce::AudioParameterBool;
 
@@ -41,7 +42,6 @@ WhiskerScopeProcessor::WhiskerScopeProcessor()
     startTimerHz (20);
 }
 
-WhiskerScopeProcessor::~WhiskerScopeProcessor() { stopTimer(); }
 
 const char* WhiskerScopeProcessor::choiceRaw (const char* id) const
 {
@@ -175,6 +175,96 @@ void WhiskerScopeProcessor::timerCallback()
 {
     const double now = juce::Time::getMillisecondCounterHiRes() / 1000.0;
     const double dt = lastTickSeconds > 0 ? juce::jlimit (0.01, 0.5, now - lastTickSeconds) : 0.05; lastTickSeconds = now; shapesTick (dt);
+    keyTick (dt); fileTick();
+}
+
+//==============================================================================
+// Key detector: about ten updates a second from the newest 16384 input samples (Mid), only while the Spectrum page is open.
+void WhiskerScopeProcessor::resetKey() { keyDet.reset(); keyRes = ws::KeyResult(); keyClock = 0; keyLastWritten = inL.written(); }
+
+void WhiskerScopeProcessor::keyTick (double dt)
+{
+    if (! keyWatched || param ("keyHold") > 0.5f) { keyLastWritten = inL.written(); keyClock = 0; return; }
+    keyClock += dt; if (keyClock < 0.1) return;
+    const double fs = sampleRateNow.load(); const uint64_t w = inL.written();
+    if (w < keyLastWritten + (uint64_t) (0.05 * fs)) { if (keyClock > 1.0) keyClock = 0; return; }     // no new audio (transport stopped): learn nothing
+    const int N = ws::KeyDetector::kFftSize; keyBufA.resize ((size_t) N); keyBufB.resize ((size_t) N);
+    inL.latest (keyBufA.data(), N); inR.latest (keyBufB.data(), N);
+    for (int i = 0; i < N; ++i) keyBufA[(size_t) i] = 0.5f * (keyBufA[(size_t) i] + keyBufB[(size_t) i]);
+    keyDet.process (keyBufA.data(), fs, keyClock); keyRes = keyDet.result(); keyClock = 0; keyLastWritten = w;
+}
+
+//==============================================================================
+// Reference file analysis on a background thread
+struct WhiskerScopeProcessor::RefJob : public juce::Thread
+{
+    explicit RefJob (const juce::File& f) : juce::Thread ("Whisker Scope reference file"), file (f) {}
+    juce::File file;
+    std::atomic<float> progress { 0.0f }; std::atomic<bool> finished { false }, cancelled { false };
+    bool ok = false; juce::String error, info; ws::Shape shape;           // written before finished is set
+
+    void fail (const juce::String& e) { error = e; finished.store (true); }
+    void run() override
+    {
+        juce::AudioFormatManager fm; fm.registerBasicFormats();
+        std::unique_ptr<juce::AudioFormatReader> rd (fm.createReaderFor (file));
+        if (rd == nullptr) { fail ("That file could not be read. It may be damaged, or in a format this system cannot decode. wav, aiff, flac and ogg always work."); return; }
+        std::string why; if (! ws::audioInfoOk (rd->sampleRate, (int) rd->numChannels, (double) rd->lengthInSamples, why)) { fail (juce::String (why)); return; }
+        const int nch = (int) rd->numChannels; const int use = juce::jmin (2, nch); const juce::int64 total = rd->lengthInSamples; const int block = 65536;
+        ws::ShapeAccumulator acc; acc.prepare (rd->sampleRate); ws::LoudnessMeter lm; lm.prepare (rd->sampleRate);
+        juce::AudioBuffer<float> buf (use, block); juce::int64 pos = 0;
+        while (pos < total)
+        {
+            if (threadShouldExit() || cancelled.load()) { finished.store (true); return; }
+            const int n = (int) juce::jmin ((juce::int64) block, total - pos);
+            if (! rd->read (&buf, 0, n, pos, true, use > 1)) { fail ("That file could not be read to the end. It may be damaged."); return; }
+            const float* l = buf.getReadPointer (0); const float* r = use > 1 ? buf.getReadPointer (1) : nullptr;
+            acc.push (l, r, n); lm.process (l, r, n); pos += n; progress.store ((float) ((double) pos / (double) total));
+        }
+        if (! acc.finish (shape)) { fail ("Not enough sound in that file to build a shape. It looks silent or very quiet."); return; }
+        const float lu = lm.integrated(); if (lu > -90.0f) shape.lufs = lu;
+        shape.name = cleanName (file.getFileNameWithoutExtension()).isEmpty() ? std::string ("Reference file") : cleanName (file.getFileNameWithoutExtension()).toStdString();
+        if (nch == 1) info = "That file is mono, so its Side shape is empty. Matching still works on Mid.";
+        ok = true; finished.store (true);
+    }
+};
+
+WhiskerScopeProcessor::~WhiskerScopeProcessor()
+{
+    stopTimer();
+    if (refJob != nullptr) { refJob->cancelled.store (true); refJob->signalThreadShouldExit(); refJob->stopThread (5000); }
+}
+
+juce::String WhiskerScopeProcessor::fileWildcard()
+{
+    juce::AudioFormatManager fm; fm.registerBasicFormats(); return fm.getWildcardForAllFormats();
+}
+
+bool WhiskerScopeProcessor::startReferenceFile (const juce::File& f)
+{
+    if (refJob != nullptr || view.capturing) return false;
+    if (! f.existsAsFile()) { lastNote = "That file does not exist any more."; return true; }
+    refJob = std::make_unique<RefJob> (f); refJob->startThread (juce::Thread::Priority::background); return true;
+}
+
+void WhiskerScopeProcessor::cancelReferenceFile() { if (refJob != nullptr) { refJob->cancelled.store (true); refJob->signalThreadShouldExit(); } }
+
+WhiskerScopeProcessor::FileStatus WhiskerScopeProcessor::fileStatus() const
+{
+    FileStatus s; if (refJob == nullptr) return s;
+    s.running = true; s.progress = refJob->progress.load(); s.name = refJob->file.getFileNameWithoutExtension(); return s;
+}
+
+void WhiskerScopeProcessor::fileTick()
+{
+    if (refJob == nullptr || ! refJob->finished.load()) return;
+    refJob->stopThread (2000);
+    if (! refJob->cancelled.load())
+    {
+        if (refJob->ok) { useAsReference (refJob->shape); view.refFromFile = true; lastNote = refJob->info; }
+        else lastNote = refJob->error;
+    }
+    refJob.reset();
 }
 
 void WhiskerScopeProcessor::shapesTick (double dt)
@@ -275,11 +365,11 @@ void WhiskerScopeProcessor::stopCapture()
     ws::Shape s; s.name = capToRef ? "Captured reference" : "Mine";
     for (int k = 0; k < ws::kBands; ++k) { s.m[(size_t) k] = (float) (10.0 * std::log10 (capAccM[k] / capFrames + 1e-20)); s.s[(size_t) k] = (float) (10.0 * std::log10 (capAccS[k] / capFrames + 1e-20)); }
     if (capLufsN > 0) { const double lu = -0.691 + 10.0 * std::log10 (capLufsE / capLufsN); if (lu > -90.0) s.lufs = (float) lu; }
-    if (capToRef) { view.ref = s; view.hasRef = true; } else { view.mine = s; view.hasMine = true; }
+    if (capToRef) { view.ref = s; view.hasRef = true; view.refFromFile = false; } else { view.mine = s; view.hasMine = true; }
     matchDirty = true;
 }
 
-void WhiskerScopeProcessor::useAsReference (const ws::Shape& s) { { const juce::ScopedLock sl (shapeLock); view.ref = s; view.hasRef = true; } matchDirty = true; }
+void WhiskerScopeProcessor::useAsReference (const ws::Shape& s) { { const juce::ScopedLock sl (shapeLock); view.ref = s; view.hasRef = true; view.refFromFile = false; } matchDirty = true; }
 void WhiskerScopeProcessor::clearReference() { { const juce::ScopedLock sl (shapeLock); view.hasRef = false; } matchDirty = true; }
 void WhiskerScopeProcessor::clearMine() { { const juce::ScopedLock sl (shapeLock); view.hasMine = false; } matchDirty = true; }
 void WhiskerScopeProcessor::renameReference (const juce::String& n) { const juce::ScopedLock sl (shapeLock); if (view.hasRef) view.ref.name = cleanName (n).toStdString(); }
@@ -353,6 +443,36 @@ bool WhiskerScopeProcessor::saveUserShape (const ws::Shape& s)
 bool WhiskerScopeProcessor::deleteUserShape (const juce::String& name)
 {
     const auto n = cleanName (name); if (n.isEmpty()) return false; return shapesDir().getChildFile (n + ".json").deleteFile();
+}
+
+bool WhiskerScopeProcessor::isFactoryShapeName (const juce::String& name) const
+{
+    for (auto& s : factoryShapes()) if (juce::String (s.name).equalsIgnoreCase (name)) return true;
+    return false;
+}
+
+bool WhiskerScopeProcessor::renameUserShape (const juce::String& from, const juce::String& to, juce::String& whyNot)
+{
+    const auto f = cleanName (from), t = cleanName (to);
+    if (f.isEmpty() || t.isEmpty()) { whyNot = "That name is not allowed. Use letters, digits, spaces and . ( ) + - only."; return false; }
+    if (f == t) return true;
+    const bool caseOnly = f.equalsIgnoreCase (t); const auto dst = shapesDir().getChildFile (t + ".json"), src = shapesDir().getChildFile (f + ".json");
+    if (isFactoryShapeName (t) || (! caseOnly && dst.existsAsFile())) { whyNot = "A reference preset with that name exists already."; return false; }
+    ws::Shape s; if (! src.existsAsFile() || src.getSize() > 20000 || ! shapeFromText (src.loadFileAsString(), s)) { whyNot = "That preset could not be read."; return false; }
+    s.name = t.toStdString();
+    if (caseOnly) src.deleteFile();
+    if (! saveUserShape (s)) { whyNot = "The preset could not be saved. Check that your user folder is writable."; if (caseOnly) { s.name = f.toStdString(); saveUserShape (s); } return false; }
+    if (! caseOnly) src.deleteFile();
+    return true;
+}
+
+bool WhiskerScopeProcessor::importShapeText (const juce::String& text, ws::Shape& saved, juce::String& whyNot)
+{
+    ws::Shape s; if (! shapeFromText (text, s)) { whyNot = "That does not look like a reference preset. Nothing was imported."; return false; }
+    const juce::String base = cleanName (juce::String (s.name)).isEmpty() ? juce::String ("Imported shape") : cleanName (juce::String (s.name)); juce::String n = base; int i = 2;
+    while (isFactoryShapeName (n) || shapesDir().getChildFile (n + ".json").existsAsFile()) n = base.substring (0, 36).trim() + " " + juce::String (i++);
+    s.name = n.toStdString(); if (! saveUserShape (s)) { whyNot = "The preset could not be saved. Check that your user folder is writable."; return false; }
+    saved = s; return true;
 }
 
 //==============================================================================

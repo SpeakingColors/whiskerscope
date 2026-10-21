@@ -414,6 +414,170 @@ struct SafetyLimiter
 };
 
 //==============================================================================
+// Key detector: chromagram of the Mid signal between 100 Hz and 2 kHz (spectral peaks within 40 dB of the strongest, kept when
+// they sit within 40 cents of a note, weight sqrt of the magnitude; the profile correlation is the one of the track analysis of
+// Scratch Cat Duo), collected over a few seconds, correlated with the
+// Krumhansl-Kessler major and minor profiles for all 24 keys. It needs a sustained tonal signal: a lone triad matches its relative
+// key almost as well (C major and A minor share the same notes; the result then says so and names the runner-up), a chord
+// progression settles it. Noise and drums give "no clear key".
+struct KeyResult
+{
+    int tonic = -1;              // 0 = C ... 11 = B, -1 = no clear key (yet)
+    bool minor = false;
+    float score = 0;             // correlation with the winning profile, -1 to 1
+    float confidence = 0;        // 0 to 1: how well the notes fit the key (correlation 0.55 reads 0, 0.95 and up reads 1)
+    bool ambiguous = false;      // the runner-up is within 0.08 of the winner (for example the relative key): see alt
+    int altTonic = -1; bool altMinor = false;
+    bool listening = true;       // not enough sound collected yet
+};
+inline const char* keyTonicName(int t)
+{
+    static const char* n[12] = { "C", "Db", "D", "Eb", "E", "F", "F#", "G", "Ab", "A", "Bb", "B" };
+    return (t >= 0 && t < 12) ? n[t] : "";
+}
+inline std::string keyName(const KeyResult& k) { return k.tonic < 0 ? std::string() : std::string(keyTonicName(k.tonic)) + (k.minor ? " minor" : " major"); }
+// Camelot wheel: 8B = C major, 8A = A minor.
+inline std::string camelotOf(const KeyResult& k)
+{
+    if (k.tonic < 0) return "";
+    static const int majNum[12] = { 8, 3, 10, 5, 12, 7, 2, 9, 4, 11, 6, 1 };      // C Db D Eb E F F# G Ab A Bb B
+    static const int minNum[12] = { 5, 12, 7, 2, 9, 4, 11, 6, 1, 8, 3, 10 };      // Cm C#m Dm D#m Em Fm F#m Gm G#m Am Bbm Bm
+    return std::to_string(k.minor ? minNum[k.tonic] : majNum[k.tonic]) + (k.minor ? "A" : "B");
+}
+
+class KeyDetector
+{
+public:
+    static constexpr int kFftSize = 16384;
+    static constexpr double kMemorySeconds = 6.0;         // time constant of the chromagram memory
+    static constexpr double kNeedSeconds = 3.0;           // sound needed before a key is named
+    static constexpr float kMinScore = 0.55f;             // below this correlation there is no clear key
+    KeyDetector() : fft(kFftSize) { prepareWindow(); reset(); }
+    void reset() { std::fill(chroma, chroma + 12, 0.0); evidence = 0; res = KeyResult(); }
+    // x: the newest kFftSize mono samples (Mid). Call it about 10 times a second; dt is the time since the last call in seconds.
+    // Frames that are silent (below about -80 dBFS) change nothing.
+    void process(const float* x, double sr, double dt)
+    {
+        re.resize(kFftSize); im.resize(kFftSize);
+        for (int i = 0; i < kFftSize; ++i) { re[(size_t) i] = x[i] * win[(size_t) i]; im[(size_t) i] = 0; }
+        fft.forward(re.data(), im.data());
+        double frame[12] = {}, peak = 0; const double df = sr / kFftSize;
+        mags.resize(kFftSize / 2 + 1); for (int k = 0; k <= kFftSize / 2; ++k) mags[(size_t) k] = std::sqrt((double) re[(size_t) k] * re[(size_t) k] + (double) im[(size_t) k] * im[(size_t) k]) * norm;
+        const int k0 = std::max(2, (int) std::ceil(100.0 / df)), k1 = std::min(kFftSize / 2 - 2, (int) std::floor(2000.0 / df));
+        for (int k = k0; k <= k1; ++k) peak = std::max(peak, mags[(size_t) k]);
+        const double floorMag = peak * 0.01;                                            // only spectral peaks within 40 dB of the strongest one count
+        for (int k = k0; k <= k1; ++k)
+        {
+            const double m = mags[(size_t) k]; if (m < floorMag || !(m > mags[(size_t) k - 1] && m >= mags[(size_t) k + 1])) continue;
+            const double a = std::log(mags[(size_t) k - 1] + 1e-12), c = std::log(m + 1e-12), d = std::log(mags[(size_t) k + 1] + 1e-12), den = a - 2 * c + d;
+            const double p = den < 0 ? 0.5 * (a - d) / den : 0.0, f = (k + clampd(p, -0.5, 0.5)) * df;     // parabolic interpolation of the peak position
+            const double midi = 69.0 + 12.0 * std::log2(f / 440.0), r = std::round(midi);
+            if (std::fabs(midi - r) > 0.4) continue;                                    // between two notes: not counted
+            frame[((int) r % 12 + 12) % 12] += std::sqrt(m);
+        }
+        if (peak < 1.0e-4) return;                                                      // silence: keep what we have
+        double tot = 0; for (int i = 0; i < 12; ++i) tot += frame[i];
+        if (tot <= 0) return;
+        const double keep = std::exp(-std::max(0.0, dt) / kMemorySeconds);
+        for (int i = 0; i < 12; ++i) chroma[i] = chroma[i] * keep + frame[i] / tot;     // each frame counts the same, loud or quiet
+        evidence = evidence * keep + std::max(0.0, dt);
+        evaluate();
+    }
+    const KeyResult& result() const { return res; }
+    const double* chromagram() const { return chroma; }
+private:
+    void prepareWindow()
+    {
+        win.resize(kFftSize); double s = 0;
+        for (int i = 0; i < kFftSize; ++i) { win[(size_t) i] = (float) (0.5 - 0.5 * std::cos(2.0 * kPi * i / kFftSize)); s += win[(size_t) i]; }
+        norm = 2.0 / s;
+    }
+    double corr(const double* prof, int tonic) const
+    {
+        double mc = 0, mp = 0; for (int i = 0; i < 12; ++i) { mc += chroma[i]; mp += prof[i]; } mc /= 12; mp /= 12;
+        double sxy = 0, sxx = 0, syy = 0;
+        for (int i = 0; i < 12; ++i) { const double a = chroma[(i + tonic) % 12] - mc, b = prof[i] - mp; sxy += a * b; sxx += a * a; syy += b * b; }
+        return sxx > 0 && syy > 0 ? sxy / std::sqrt(sxx * syy) : 0.0;
+    }
+    void evaluate()
+    {
+        static const double maj[12] = { 6.35, 2.23, 3.48, 2.33, 4.38, 4.09, 2.52, 5.19, 2.39, 3.66, 2.29, 2.88 };
+        static const double mnr[12] = { 6.33, 2.68, 3.52, 5.38, 2.60, 3.53, 2.54, 4.75, 3.98, 2.69, 3.34, 3.17 };
+        res = KeyResult(); res.listening = evidence < kNeedSeconds; if (res.listening) return;
+        double best = -2, second = -2; int bt = -1, st = -1; bool bm = false, sm = false;
+        for (int t = 0; t < 12; ++t) for (int mi = 0; mi < 2; ++mi)
+        {
+            const double c = corr(mi ? mnr : maj, t);
+            if (c > best) { second = best; st = bt; sm = bm; best = c; bt = t; bm = mi == 1; } else if (c > second) { second = c; st = t; sm = mi == 1; }
+        }
+        res.score = (float) best;
+        if (best >= kMinScore)
+        {
+            res.tonic = bt; res.minor = bm; res.confidence = (float) clampd((best - 0.55) / 0.4, 0.0, 1.0);
+            if (best - second < 0.08) { res.ambiguous = true; res.altTonic = st; res.altMinor = sm; }
+        }
+    }
+    Fft fft; std::vector<float> win, re, im; std::vector<double> mags; double norm = 1, chroma[12] = {}, evidence = 0; KeyResult res;
+};
+
+//==============================================================================
+// Reference file analysis: the average Mid and Side shape of a whole file (60 bands, same maths as the live capture: FFT of 16384
+// samples every 8192, frames below -62 dB on the Mid band peak are skipped, power averaged, then read as dB), plus a check of what
+// the decoder reports so odd files are refused with a clear message instead of failing later. Pure maths, no file access here.
+inline bool audioInfoOk(double sampleRate, int channels, double lengthSamples, std::string& why)
+{
+    if (!(sampleRate >= 8000.0 && sampleRate <= 384000.0)) { why = "The sample rate of that file is not supported."; return false; }
+    if (channels < 1 || channels > 64) { why = "That file has an unsupported number of channels."; return false; }
+    if (!(lengthSamples >= 2.0 * sampleRate)) { why = "That file is shorter than 2 seconds. Use a longer piece of music."; return false; }
+    if (lengthSamples > 3600.0 * sampleRate) { why = "That file is longer than 60 minutes. Cut out the part you want to compare."; return false; }
+    why.clear(); return true;
+}
+
+class ShapeAccumulator
+{
+public:
+    static constexpr int kN = 16384, kHop = 8192;
+    static constexpr float kGateDb = -62.0f;
+    void prepare(double sampleRate)
+    {
+        sr = sampleRate; spM.prepare(sr, kN); spS.prepare(sr, kN); mBuf.assign(kN, 0.0f); sBuf.assign(kN, 0.0f);
+        wr = 0; count = 0; frames = 0; skipped = 0; std::fill(accM, accM + kBands, 0.0); std::fill(accS, accS + kBands, 0.0);
+    }
+    // r may be null (mono). Any block length.
+    void push(const float* l, const float* r, int n)
+    {
+        for (int i = 0; i < n; ++i)
+        {
+            const float a = l[i], b = r ? r[i] : l[i];
+            mBuf[(size_t) wr] = 0.5f * (a + b); sBuf[(size_t) wr] = 0.5f * (a - b); wr = (wr + 1) % kN; ++count;
+            if (count >= kN && (count - kN) % kHop == 0) analyseFrame();
+        }
+    }
+    int usedFrames() const { return frames; }
+    int skippedFrames() const { return skipped; }
+    // Needs at least 10 used frames. Writes the average shape (name left alone).
+    bool finish(Shape& out) const
+    {
+        if (frames < 10) return false;
+        for (int k = 0; k < kBands; ++k) { out.m[(size_t) k] = (float) (10.0 * std::log10(accM[k] / frames + 1e-20)); out.s[(size_t) k] = (float) (10.0 * std::log10(accS[k] / frames + 1e-20)); }
+        return true;
+    }
+private:
+    void analyseFrame()
+    {
+        std::vector<float>& tm = tmpM; std::vector<float>& ts = tmpS; tm.resize(kN); ts.resize(kN);
+        for (int i = 0; i < kN; ++i) { const int j = (wr + i) % kN; tm[(size_t) i] = mBuf[(size_t) j]; ts[(size_t) i] = sBuf[(size_t) j]; }
+        spM.analyse(tm.data(), 0.0f); spS.analyse(ts.data(), 0.0f);
+        float bm[kBands], bs[kBands]; spectrumToBands(spM.spectrum().data(), spM.numBins(), sr, bm); spectrumToBands(spS.spectrum().data(), spS.numBins(), sr, bs);
+        float lvl = -999.0f; for (int k = 6; k < 58; ++k) lvl = std::max(lvl, std::max(bm[k], bs[k]));      // Mid or Side: a file that is all Side is not silence
+        if (lvl > kGateDb) { for (int k = 0; k < kBands; ++k) { accM[k] += std::pow(10.0, bm[k] / 10.0); accS[k] += std::pow(10.0, bs[k] / 10.0); } ++frames; }
+        else ++skipped;
+    }
+    double sr = 48000; Spectrum spM, spS; std::vector<float> mBuf, sBuf, tmpM, tmpS; int wr = 0, frames = 0, skipped = 0; long long count = 0;
+    double accM[kBands] = {}, accS[kBands] = {};
+};
+
+//==============================================================================
 // Lock free single writer ring for the audio thread to hand samples to the display thread. Size is a power of two.
 template <int Log2Size>
 class SampleRingT

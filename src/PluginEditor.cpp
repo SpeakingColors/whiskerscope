@@ -4,7 +4,7 @@
 #include "catui/RenderGate.h"
 
 #ifndef WS_VERSION
- #define WS_VERSION "0.2.0"
+ #define WS_VERSION "0.3.0"
 #endif
 
 using APVTS = juce::AudioProcessorValueTreeState;
@@ -177,6 +177,7 @@ private:
     Modal modal { env.pal };
     int shownPage = -1; double lastTick = 0; int labelTick = 0; juce::String lastSync; int lastColor = -1; bool lastMuted = false;
     // shapes
+    MBtn* bLoadFile = nullptr; FileProgress* fileProg = nullptr; std::unique_ptr<juce::FileChooser> chooser; bool lastFileRunning = false;
     Field* fShape = nullptr; MBtn *bCapRef = nullptr, *bCanRef = nullptr, *bCapMine = nullptr, *bCanMine = nullptr, *bRefOn = nullptr; StatusText *stRef = nullptr, *stMine = nullptr, *stAuto = nullptr; Sugg* sugg = nullptr;
     std::vector<ws::Shape> shapeList; juce::StringArray factoryNames;
     Flow* scopeFlow = nullptr; juce::Component *hostDur = nullptr, *hostFreq = nullptr, *hostPer = nullptr, *hostDiv = nullptr;
@@ -201,6 +202,7 @@ private:
     void presetMenu(); void saveDialog(); void moreDialog(); void note (const juce::String& s);
     void copyDialog (const juce::String& text, const juce::String& what);
     void importDialog (bool preset);
+    void loadFileDialog(); void manageDialog(); void renameShapeDialog (const juce::String& nm);
     void relayoutScope();
     void applySettings();
     friend class WhiskerScopeEditor;
@@ -246,7 +248,7 @@ Content::Content (WhiskerScopeEditor& ed, WhiskerScopeProcessor& pr) : editor (e
     gate.onFrame = [this] { tick(); }; startFrames();
 }
 
-Content::~Content() { gate.stop(); if (tips) tips->setLookAndFeel (nullptr); setLookAndFeel (nullptr); p.setShapesWatched (false); }
+Content::~Content() { gate.stop(); if (tips) tips->setLookAndFeel (nullptr); setLookAndFeel (nullptr); p.setShapesWatched (false); p.setKeyWatched (false); p.cancelReferenceFile(); }
 
 void Content::applySettings() { if (tips) tips->setMillisecondsBeforeTipAppears (settings.bubbles ? 1000 : 1000000000); env.st = settings; }
 
@@ -302,7 +304,8 @@ void Content::buildPages()
       f->add (mkField ("pkSpd", nullptr, 95)); f->add (mkField ("pkN", "Peak labels", 96)); f->add (mkField ("maskDb", nullptr, 118)); f->add (mkField ("bands", nullptr, 104)); f->add (mkField ("scale", nullptr, 77));
       f->add (mkToggle ("style", nullptr, 56)); f->add (mkToggle ("wf", nullptr, 111)); f->add (mkToggle ("rot", nullptr, 82)); f->add (mkToggle ("hold", nullptr, 112));
       f->add (mkButton ("Peak reset", 118, "Peak reset", "Clears the held peaks and the clip light. Shortcut: R.", [this] { resetPeaksAll(); }));
-      f->add (mkToggle ("fzSpec", nullptr, 81)); }
+      f->add (mkToggle ("fzSpec", nullptr, 81)); f->add (mkToggle ("keyHold", nullptr, 100));
+      f->add (mkButton ("Key reset", 110, "Key reset", "Forgets the notes the key detector has heard so far and starts listening again. Use it when the song changes key or you load a different piece.", [this] { p.resetKey(); })); }
     { auto* f = flowPanel (1, 92); scopeFlow = f;
       f->add (mkField ("chan", nullptr, 102)); f->add (mkField ("sync", nullptr, 105));
       f->add (hostDur = mkKnob ("dur", nullptr)); f->add (hostFreq = mkKnob ("freq", nullptr)); f->add (hostPer = mkKnob ("periods", nullptr)); f->add (hostDiv = mkField ("div", nullptr, 104));
@@ -333,22 +336,16 @@ void Content::buildShapes()
     auto* g1 = group (0, "1", "Reference", "the sound you want yours to sound like"); auto* g2 = group (1, "2", "Mine", "your own sound; skip this and the live sound is used"); auto* g3 = group (2, "3", "Match", "the EQ that moves mine toward the reference, with level control");
     bCapRef = mkButton ("Capture reference", 188, "Capture reference", "Play the song or lead you want to sound like, press this, let it play, then press again. Its average spectrum shape and loudness are frozen as the reference.", [this] { if (p.shapes().capturing) { p.stopCapture(); note (p.takeNote()); } else p.startCapture (true); }); g1->add (bCapRef);
     bCanRef = mkButton ("Cancel", 70, "Cancel capture", "Throw the running capture away and keep what you had before.", [this] { p.cancelCapture(); }); g1->add (bCanRef); bCanRef->setVisible (false);
-    { juce::StringArray none; fShape = keep (new Field ("Or pick a saved shape", none)); fShape->setSize (185, Field::kHeight); fShape->setTip ("Shape library\nStarting-point shapes plus the ones you saved."); g1->add (fShape); }
+    bLoadFile = mkButton ("Load file...", 124, "Load reference file", "Analyses an audio file on this computer and uses its average Mid and Side shape as the reference. Works offline, nothing is uploaded. " + WhiskerScopeProcessor::fileWildcard().replace ("*.", ".").replace (";", " ") + " files can be read on this system.", [this] { loadFileDialog(); }); g1->add (bLoadFile);
+    { juce::StringArray none; fShape = keep (new Field ("Or pick a reference preset", none)); fShape->setSize (185, Field::kHeight); fShape->setTip ("Reference presets\nStarting-point shapes made by formula (never measured from a song) plus the ones you saved."); g1->add (fShape); }
     g1->add (mkButton ("Use as reference", 172, "Use as reference", "Loads the chosen shape as the target.", [this] { const int id = fShape->box.getSelectedId() - 1000; if (id >= 0 && id < (int) shapeList.size()) p.useAsReference (shapeList[(size_t) id]); }));
-    g1->add (mkButton ("Save as...", 101, "Save reference as", "Keeps the current reference (shape and loudness) in your shape library on this device.", [this]
+    g1->add (mkButton ("Save as preset...", 140, "Save reference as preset", "Keeps the current reference (shape and loudness), captured or loaded from a file, as a named preset in your library on this device.", [this]
     {
         if (! p.shapes().hasRef) { note ("There is no reference yet. Capture one or pick a shape first."); return; }
-        const juce::String cur = juce::String (p.shapes().ref.name); modal.begin ("Save shape"); modal.para ("Name for this shape:"); auto* in = modal.input (cur == "Captured reference" ? juce::String ("My shape") : cur, 40, false);
-        modal.show ({ { "Cancel" }, { "Save", true, [this, in] { auto n = WhiskerScopeProcessor::cleanName (in->getText()); if (n.isEmpty()) return false; auto s = p.shapes().ref; s.name = n.toStdString(); if (! p.saveUserShape (s)) { juce::MessageManager::callAsync ([this] { note ("The shape could not be saved. Check that your user folder is writable."); }); return true; } p.renameReference (n); refreshShapeList (n); return true; } } });
+        const juce::String cur = juce::String (p.shapes().ref.name); modal.begin ("Save reference preset"); modal.para ("Name for this preset:"); auto* in = modal.input (cur == "Captured reference" ? juce::String ("My shape") : cur, 40, false);
+        modal.show ({ { "Cancel" }, { "Save", true, [this, in] { auto n = WhiskerScopeProcessor::cleanName (in->getText()); if (n.isEmpty()) return false; if (p.isFactoryShapeName (n)) n = WhiskerScopeProcessor::cleanName (n + " (mine)"); auto s = p.shapes().ref; s.name = n.toStdString(); if (! p.saveUserShape (s)) { juce::MessageManager::callAsync ([this] { note ("The shape could not be saved. Check that your user folder is writable."); }); return true; } p.renameReference (n); refreshShapeList (n); return true; } } });
     }));
-    g1->add (mkButton ("Manage...", 101, "Manage shapes", "Delete a saved shape, export the reference as text, or import a shape you were sent.", [this]
-    {
-        const int id = fShape->box.getSelectedId() - 1000; const bool valid = id >= 0 && id < (int) shapeList.size(); const juce::String nm = valid ? juce::String (shapeList[(size_t) id].name) : juce::String(); const bool user = valid && ! factoryNames.contains (nm);
-        modal.begin ("Shapes"); modal.para ("Selected in the library: **" + nm + "**" + (user ? "" : " (starting points cannot be deleted)"));
-        modal.show ({ { "Delete selected", false, [this, user, nm] { if (! user) return false; p.deleteUserShape (nm); refreshShapeList(); return true; } },
-                      { "Export reference", false, [this] { if (! p.shapes().hasRef) return false; juce::MessageManager::callAsync ([this] { copyDialog (WhiskerScopeProcessor::shapeToText (p.shapes().ref), "The shape"); }); return true; } },
-                      { "Import", false, [this] { juce::MessageManager::callAsync ([this] { importDialog (false); }); return true; } }, { "Close" } });
-    }));
+    g1->add (mkButton ("Manage...", 101, "Manage reference presets", "Rename, delete, export or import reference presets.", [this] { manageDialog(); }));
     bRefOn = mkToggle ("shRefOn", nullptr, 140); g1->add (bRefOn);
     g1->add (mkButton ("Rename...", 100, "Rename reference", "Gives the current reference a name of your choice.", [this]
     {
@@ -361,7 +358,7 @@ void Content::buildShapes()
         if (! p.shapes().hasRef) return; modal.begin ("Clear reference?"); modal.para ("The reference **" + juce::String (p.shapes().ref.name) + "** will be removed from the plugin. A saved copy in your library stays.");
         modal.show ({ { "Cancel" }, { "Clear", true, [this] { p.clearReference(); return true; } } });
     }));
-    g1->add (mkField ("shRefTilt", "Ref tilt", 98)); stRef = keep (new StatusText (env.pal)); g1->add (stRef, true);
+    g1->add (mkField ("shRefTilt", "Ref tilt", 98)); stRef = keep (new StatusText (env.pal)); g1->add (stRef, true); fileProg = keep (new FileProgress (env.pal)); fileProg->setSize (520, 16); g1->add (fileProg, true); fileProg->setVisible (false);
     bCapMine = mkButton ("Capture mine", 137, "Capture mine", "Play your own sound, press this, let it play, then press again. Its shape is frozen so you can compare while you move on.", [this] { if (p.shapes().capturing) { p.stopCapture(); note (p.takeNote()); } else p.startCapture (false); }); g2->add (bCapMine);
     bCanMine = mkButton ("Cancel", 70, "Cancel capture", "Throw the running capture away and keep what you had before.", [this] { p.cancelCapture(); }); g2->add (bCanMine); bCanMine->setVisible (false);
     g2->add (mkButton ("Clear mine", 111, "Clear mine", "Forget the captured shape of your sound and compare the live sound again.", [this] { p.clearMine(); }));
@@ -456,7 +453,7 @@ bool Content::keyPressed (const juce::KeyPress& k)
 
 void Content::setPage (int i)
 {
-    i = juce::jlimit (0, 3, i); p.page = i; if (i == shownPage) return; shownPage = i; p.setShapesWatched (i == 3);
+    i = juce::jlimit (0, 3, i); p.page = i; if (i == shownPage) return; shownPage = i; p.setShapesWatched (i == 3); p.setKeyWatched (i == 0);
     for (int k = 0; k < 4; ++k) { views[k]->setVisible (k == i); panels[k]->setVisible (k == i); tabs[k]->setLit (k == i); }
     if (auto* s = dynamic_cast<StereoView*> (views[2].get())) s->clearTrail();
     if (auto* s = dynamic_cast<SpecView*> (views[0].get())) s->clearHistory();
@@ -481,16 +478,50 @@ void Content::copyDialog (const juce::String& text, const juce::String& what)
     modal.begin ("Copied"); modal.para (what + " copied to the clipboard."); modal.show ({ { "Close" } });
 }
 
+void Content::loadFileDialog()
+{
+    if (p.fileStatus().running) { p.cancelReferenceFile(); return; }
+    if (p.shapes().capturing) { note ("Stop the capture first."); return; }
+    chooser = std::make_unique<juce::FileChooser> ("Choose an audio file to use as the reference", juce::File::getSpecialLocation (juce::File::userMusicDirectory), WhiskerScopeProcessor::fileWildcard());
+    chooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles, [this] (const juce::FileChooser& fc)
+    {
+        const auto f = fc.getResult(); if (f == juce::File()) return;
+        if (! p.startReferenceFile (f)) note ("Could not start. A capture or another analysis is running.");
+    });
+}
+
+void Content::renameShapeDialog (const juce::String& nm)
+{
+    modal.begin ("Rename preset"); modal.para ("New name for **" + nm + "**:"); auto* in = modal.input (nm, 40, false);
+    modal.show ({ { "Cancel" }, { "Rename", true, [this, in, nm]
+    {
+        auto n = WhiskerScopeProcessor::cleanName (in->getText()); if (n.isEmpty()) return false;
+        juce::String why; if (! p.renameUserShape (nm, n, why)) { juce::MessageManager::callAsync ([this, why] { note (why); }); return true; }
+        refreshShapeList (n); return true;
+    } } });
+}
+
+void Content::manageDialog()
+{
+    const int id = fShape->box.getSelectedId() - 1000; const bool valid = id >= 0 && id < (int) shapeList.size(); const juce::String nm = valid ? juce::String (shapeList[(size_t) id].name) : juce::String(); const bool user = valid && ! p.isFactoryShapeName (nm);
+    modal.begin ("Reference presets"); modal.para ("Selected in the drop-down: **" + (valid ? nm : juce::String ("none")) + "**" + (user || ! valid ? "" : " (starting points cannot be renamed or deleted)"));
+    modal.show ({ { "Rename selected", false, [this, user, nm] { if (! user) return false; juce::MessageManager::callAsync ([this, nm] { renameShapeDialog (nm); }); return true; } },
+                  { "Delete selected", false, [this, user, nm] { if (! user) return false; p.deleteUserShape (nm); refreshShapeList(); return true; } },
+                  { "Export selected", false, [this, valid, id] { if (! valid) return false; const auto s = shapeList[(size_t) id]; juce::MessageManager::callAsync ([this, s] { copyDialog (WhiskerScopeProcessor::shapeToText (s), "The preset"); }); return true; } },
+                  { "Export reference", false, [this] { if (! p.shapes().hasRef) return false; juce::MessageManager::callAsync ([this] { copyDialog (WhiskerScopeProcessor::shapeToText (p.shapes().ref), "The reference"); }); return true; } },
+                  { "Import", false, [this] { juce::MessageManager::callAsync ([this] { importDialog (false); }); return true; } }, { "Close" } });
+}
+
 void Content::importDialog (bool preset)
 {
-    modal.begin (preset ? "Import preset" : "Import shape"); modal.para (preset ? "Paste exported preset text. Anything that does not look like a preset is rejected." : "Paste exported shape text. Anything that does not look like a shape is rejected.");
+    modal.begin (preset ? "Import preset" : "Import reference preset"); modal.para (preset ? "Paste exported preset text. Anything that does not look like a preset is rejected." : "Paste exported reference preset text. It is checked, saved to your library under a free name and loaded as the reference. Anything that does not look like one is rejected.");
     auto* ta = modal.input ({}, 0, true, false, preset ? "Paste exported preset text" : "Paste the shape text here");
     auto bad = [ta] { ta->setColour (juce::TextEditor::outlineColourId, juce::Colour (0xffFF1383)); ta->setColour (juce::TextEditor::focusedOutlineColourId, juce::Colour (0xffFF1383)); ta->repaint(); return false; };
     modal.show ({ { "Cancel" }, { "Import", true, [this, ta, preset, bad]
     {
         if (preset) { juce::String nn; if (! p.importPresetText (ta->getText(), nn)) return bad(); p.loadPreset (nn); return true; }
-        ws::Shape s; if (! WhiskerScopeProcessor::shapeFromText (ta->getText(), s)) return bad();
-        p.useAsReference (s); return true;
+        ws::Shape s; juce::String why; if (! p.importShapeText (ta->getText(), s, why)) return bad();
+        p.useAsReference (s); refreshShapeList (juce::String (s.name)); return true;
     } } });
 }
 
@@ -542,16 +573,20 @@ void Content::refreshShapeList (const juce::String& select)
 void Content::updateShapesStatus()
 {
     const auto& V = p.shapes(); const bool refOn = p.param ("shRefOn") > 0.5f; const bool lufsRef = V.hasRef && V.ref.hasLufs();
-    stRef->setText ("Reference: " + (V.hasRef ? juce::String (V.ref.name) + (refOn ? "" : " [OFF]") + (lufsRef ? "  " + juce::String (V.ref.lufs, 1) + " LUFS" : "  (no loudness stored)") : juce::String ("none yet")));
+    stRef->setText ("Reference: " + (V.hasRef ? juce::String (V.ref.name) + (V.refFromFile ? " (from file)" : "") + (refOn ? "" : " [OFF]") + (lufsRef ? "  " + juce::String (V.ref.lufs, 1) + " LUFS" : "  (no loudness stored)") : juce::String ("none yet")));
     stMine->setText ("Mine: " + (V.hasMine ? "captured" + (V.mine.hasLufs() ? "  " + juce::String (V.mine.lufs, 1) + " LUFS" : juce::String()) : V.hasLive ? juce::String ("live (following the sound)") : juce::String ("waiting for sound")));
     const juce::String mode (p.choiceRaw ("shAuto")); const float ad = p.autoDb.load();
     stAuto->setText (mode == "off" ? juce::String ("Auto level off") : (mode == "ref" && ! lufsRef) ? juce::String ("Auto: no ref loudness") : "Auto gain " + juce::String (ad >= 0 ? "+" : "") + juce::String (ad, 1) + " dB" + (p.autoHeld.load() ? ", held" : ""));
     const bool capRef = V.capturing && V.captureIsRef, capMine = V.capturing && ! V.captureIsRef;
     bCapRef->setButtonText (capRef ? "Stop and keep" : "Capture reference"); bCapRef->setLit (capRef); bCapRef->setEnabled (! capMine);
     bCapMine->setButtonText (capMine ? "Stop and keep" : "Capture mine"); bCapMine->setLit (capMine); bCapMine->setEnabled (! capRef);
+    const auto fs = p.fileStatus();
+    bLoadFile->setButtonText (fs.running ? "Cancel load" : "Load file..."); bLoadFile->setLit (fs.running); bLoadFile->setEnabled (! V.capturing);
+    bCapRef->setEnabled (! capMine && ! fs.running); bCapMine->setEnabled (! capRef && ! fs.running);
+    if (fs.running) fileProg->set (fs.progress, "Analysing " + fs.name + "  " + juce::String ((int) std::lround (fs.progress * 100.0f)) + " %");
+    if (fs.running != lastFileRunning) { lastFileRunning = fs.running; fileProg->setVisible (fs.running); stRef->setVisible (! fs.running); }
     if (bCanRef->isVisible() != capRef) { bCanRef->setVisible (capRef); shapesGroups[0]->relayout(); }
     if (bCanMine->isVisible() != capMine) { bCanMine->setVisible (capMine); shapesGroups[1]->relayout(); }
-    if (! V.capturing) { const auto n = p.takeNote(); if (n.isNotEmpty()) note (n); }
     sugg->repaint();
 }
 
@@ -575,6 +610,7 @@ void Content::tick()
     env.update (dt); syncFromProcessor();
     const int pg = juce::jlimit (0, 3, p.page); views[pg]->update (dt); views[pg]->repaint(); meters->repaint();
     if (pg == 3) updateShapesStatus();
+    if (! p.shapes().capturing) { const auto n = p.takeNote(); if (n.isNotEmpty()) note (n); }
 }
 
 //------------------------------------------------------------------------------
@@ -630,10 +666,10 @@ void Content::showGuide()
 {
     modal.begin ("Quick guide");
     modal.head ("Scope"); modal.bullets ({ "Shows the waveform. Sync keeps repeating waves still: Trigger, a fixed Hz, the detected pitch, or the host beat.", "Channels: L / R, mono, or Mid / Side." });
-    modal.head ("Spectrum"); modal.bullets ({ "Hover for frequency, note and dB. The top-left line names the highest peak.", "Waterfall shows history. Bands groups the curve like an equaliser. Freeze holds the picture." });
+    modal.head ("Spectrum"); modal.bullets ({ "Hover for frequency, note and dB. The top-left line names the highest peak.", "Waterfall shows history. Bands groups the curve like an equaliser. Freeze holds the picture.", "The KEY box guesses the key and Camelot code of sustained, tonal sound (chords, melodies). Noise and drums alone give no key. Key hold freezes it, Key reset starts again." });
     modal.head ("Stereo field"); modal.bullets ({ "Vertical line is mono, sideways is wide. A line leaning left or right means one channel is louder.", "Correlation and Mono loss tell you if it survives being summed to mono." });
-    modal.head ("Shapes, in three steps"); modal.bullets ({ "**1 Reference:** play the song or lead you want to sound like, press Capture reference, press again to keep it. Or pick a saved shape.", "**2 Mine:** play your own sound and Capture mine. Skip it and the live sound is used.", "**3 Match:** the bars at the bottom of the graph are the EQ that moves mine toward the reference. EQ on applies it to the sound.",
-                                                           "Input and Output set the level in and out. Auto level keeps the loudness the same with the EQ on or off (Keep my loudness), or follows the loudness captured with the reference (Match reference).", "Meters on the right show IN and OUT. Save shapes to your library; Manage exports and imports them as text." });
+    modal.head ("Shapes, in three steps"); modal.bullets ({ "**1 Reference:** play the song or lead you want to sound like, press Capture reference, press again to keep it. Or Load file to analyse an audio file on this computer (nothing is uploaded), or pick a reference preset.", "**2 Mine:** play your own sound and Capture mine. Skip it and the live sound is used.", "**3 Match:** the bars at the bottom of the graph are the EQ that moves mine toward the reference. EQ on applies it to the sound.",
+                                                           "Input and Output set the level in and out. Auto level keeps the loudness the same with the EQ on or off (Keep my loudness), or follows the loudness captured with the reference (Match reference).", "Meters on the right show IN and OUT. Save as preset keeps a reference in your library; Manage renames, deletes, exports and imports them as text." });
     modal.head ("Meters"); modal.bullets ({ "Blue is normal, purple is a warning, pink is clipping. The pink cap on top stays lit until Peak reset.", "Metering: Peak, RMS (average level), both, or Loudness (LUFS): momentary M, short-term S and integrated I, the way streaming and broadcast meters read it." });
     modal.head ("Window"); modal.para ("Drag any edge or corner to resize. The shape stays the same. Double-click a wooden side for the default size.");
     modal.head ("Sidechain (layer B)"); modal.para ("Route a second track to the sidechain input of the plugin in your DAW. It is never played; it is drawn in yellow on Spectrum, Scope and Stereo field. On Spectrum, pink bands mark where A and B may mask each other (rule of thumb).");

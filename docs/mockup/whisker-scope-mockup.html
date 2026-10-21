@@ -113,8 +113,13 @@ a.btn[aria-disabled="true"] { opacity:.45; pointer-events:none; }
 .g3 > .gh { flex:1 0 100%; display:flex; gap:8px; align-items:baseline; font-size:13px; letter-spacing:.16em; text-transform:uppercase; color:var(--ink); }
 .g3 > .gh i { font-style:normal; display:inline-grid; place-items:center; width:20px; height:20px; border-radius:50%; background:var(--cAcc); color:#111; font-weight:700; font-size:13px; letter-spacing:0; }
 .g3 > .gh small { letter-spacing:.03em; text-transform:none; font-size:12.5px; color:var(--ink-dim); }
+.g3 .st[hidden] { display:none; }
 .g3 .st { font-family:var(--f-num); font-size:12px; color:var(--cAcc); letter-spacing:0; text-transform:none; }
 .g3 .kw { width:76px; }
+.pbar { height:10px; width:220px; background:#0a0a0c; border:1px solid var(--line); border-radius:5px; overflow:hidden; }
+.pbar i { display:block; height:100%; width:0; background:var(--cAcc); }
+.rfw[hidden] { display:none; }
+.rfw { flex:1 0 100%; display:flex; gap:10px; align-items:center; font-family:var(--f-num); font-size:12px; color:var(--cAcc); letter-spacing:0; }
 @media (prefers-reduced-motion:reduce) { * { transition:none !important; } }
 </style>
 <div id="desk"><div id="frame"><div id="win">
@@ -144,7 +149,7 @@ a.btn[aria-disabled="true"] { opacity:.45; pointer-events:none; }
     <section class="rig" aria-label="Preview rig">
       <span class="lab">Preview rig</span>
       <div class="grp" id="rigSrc"></div>
-      <div class="grp"><button id="bPlay" data-tip="Start or stop the test signal. Shortcut: Space.">&#9654; Play</button><button id="bFile" data-tip="Load your own audio file to look at (wav, mp3, flac, ogg). It stays in this browser tab and is never uploaded.">Load file</button><input type="file" id="fileIn" accept="audio/*" hidden></div>
+      <div class="grp"><button id="bPlay" data-tip="Start or stop the test signal. Shortcut: Space.">&#9654; Play</button><button id="bFile" data-tip="Load your own audio file to look at (wav, mp3, flac, ogg). It stays in this browser tab and is never uploaded.">Load file</button><input type="file" id="fileIn" accept="audio/*" hidden><input type="file" id="refFileIn" accept="audio/*,.wav,.wave,.aif,.aiff,.flac,.mp3,.ogg,.oga,.m4a" hidden></div>
       <div class="grp" id="rigGain"></div>
       <span class="pmsg" id="panicMsg" hidden>PANIC: all sound stopped. Press Play to start again.</span>
       <span class="bpm" id="bpmT" data-tip="Tempo the plugin gets from the host. Beat sync uses it.">BPM 150</span>
@@ -177,7 +182,7 @@ a.btn[aria-disabled="true"] { opacity:.45; pointer-events:none; }
         <div class="ro" id="ro2"></div>
       </aside>
     </section>
-    <footer class="foot"><span><b>Studio 87</b> &middot; Whisker Scope v0.2</span><span id="sizeT" data-tip="Window size. Drag any edge or corner of the plugin to resize it; the shape stays the same. Double-click here for 100 %.">Window 100 %</span><span></span></footer>
+    <footer class="foot"><span><b>Studio 87</b> &middot; Whisker Scope v0.3</span><span id="sizeT" data-tip="Window size. Drag any edge or corner of the plugin to resize it; the shape stays the same. Double-click here for 100 %.">Window 100 %</span><span></span></footer>
   </div>
   <div class="cheek r"></div>
 </div>
@@ -221,7 +226,7 @@ function applyScheme(id) {
 /* ---------- state, parameters ---------- */
 var DEF = { src: "hard", gain: 0, view: "spec", chan: "lr", sync: "free", dur: 60, freq: 110, periods: 4, div: "1/16", trig: 0, trans: false, fzScope: false,
   ana: "lr", fft: 8192, speed: "med", range: 90, slope: 4.5, bands: "full", scale: "log", style: "fill", wf: false, rot: false, hold: true, fzSpec: false,
-  pers: 0.6, zoom: 1, fzSt: false, mmode: "both", rms: 300, color: "soda",
+  pers: 0.6, zoom: 1, fzSt: false, keyHold: false, mmode: "both", rms: 300, color: "soda",
   shChan: "m", shSmooth: 2, shStrength: 0.7, shLimit: 9, shHear: false, shLen: 0, shOut: 0, shAuto: "in", shRefOn: true, shRefTilt: 0, scSrc: "off", scGain: 0, pkN: 3, pkSpd: 1000, maskDb: 6, vol: 0.5 };
 var S = {}, UI = {}, SET = { bubbles: true, eco: false, color: "soda", warn: -12 };
 Object.keys(DEF).forEach(function (k) { S[k] = DEF[k]; });
@@ -330,6 +335,8 @@ var fmtDb = function (v) { return (v > 0 ? "+" : "") + v.toFixed(1) + " dB"; };
   mkTog(sp, "hold", "Peak hold", "Keeps a thin line at the loudest value each frequency reached.");
   var pr = document.createElement("button"); pr.textContent = "Peak reset"; sp.appendChild(pr); pr.addEventListener("click", resetPeaks); attachTip(pr, "Peak reset", "Clears the held peaks. Shortcut: R.");
   mkTog(sp, "fzSpec", "Freeze", "Holds the spectrum picture. Shortcut: F.");
+  mkTog(sp, "keyHold", "Key hold", "Freezes the key readout in the top right corner of the display, so it stays while you play something else.");
+  var kr = document.createElement("button"); kr.id = "keyReset"; kr.textContent = "Key reset"; sp.appendChild(kr); kr.addEventListener("click", keyReset); attachTip(kr, "Key reset", "Forgets the notes the key detector has heard so far and starts listening again. Use it when the song changes key or you load a different piece.");
   mkKnob(st, { id: "pers", label: "Persistence", min: 0, max: 0.95, step: 0.01, fmt: function (v) { return Math.round(v * 100) + " %"; }, tip: "How long the dots leave a trail. More trail shows the shape of the sound over time." });
   mkKnob(st, { id: "zoom", label: "Zoom", min: 0.25, max: 8, log: true, fmt: function (v) { return v.toFixed(2) + "x"; }, tip: "Magnifies the picture so quiet material becomes visible." });
   mkTog(st, "fzSt", "Freeze", "Holds the picture. Shortcut: F.");
@@ -829,6 +836,52 @@ function drawMeters() {
   txt(h, "Antiphase", 8, 11, C.r, "left", 9); txt(h, "Stereo", w2 / 2, 11, "#d6d8de", "center", 9); txt(h, "Mono", w2 - 8, 11, C.l, "right", 9);
 }
 
+
+/* ---------- key detector: same recipe as the plugin engine (spectral peaks within 40 dB of the strongest, within 40 cents of a note) (see include/whiskerscope/Engine.h, KeyDetector) ---------- */
+var KMAJ = [6.35, 2.23, 3.48, 2.33, 4.38, 4.09, 2.52, 5.19, 2.39, 3.66, 2.29, 2.88], KMIN = [6.33, 2.68, 3.52, 5.38, 2.60, 3.53, 2.54, 4.75, 3.98, 2.69, 3.34, 3.17];
+var KNAMES = ["C", "Db", "D", "Eb", "E", "F", "F#", "G", "Ab", "A", "Bb", "B"], CAM_MAJ = [8, 3, 10, 5, 12, 7, 2, 9, 4, 11, 6, 1], CAM_MIN = [5, 12, 7, 2, 9, 4, 11, 6, 1, 8, 3, 10];
+var KD = { chroma: new Float64Array(12), ev: 0, acc: 0, buf: new Float32Array(8192), res: { tonic: -1, listening: true } };
+function keyReset() { KD.chroma.fill(0); KD.ev = 0; KD.acc = 0; KD.res = { tonic: -1, listening: true }; }
+function keyCorr(prof, t) {
+  var c = KD.chroma, mc = 0, mp = 0, i; for (i = 0; i < 12; i++) { mc += c[i]; mp += prof[i]; } mc /= 12; mp /= 12;
+  var sxy = 0, sxx = 0, syy = 0; for (i = 0; i < 12; i++) { var a = c[(i + t) % 12] - mc, b = prof[i] - mp; sxy += a * b; sxx += a * a; syy += b * b; }
+  return sxx > 0 && syy > 0 ? sxy / Math.sqrt(sxx * syy) : 0;
+}
+function keyStep(dt) {
+  if (!G.shM) return; var n = 8192, b = KD.buf, df = sr / 16384, frame = new Float64Array(12), peak = 0, k;
+  G.shM.getFloatFrequencyData(b);
+  var k0 = Math.ceil(100 / df), k1 = Math.floor(2000 / df); for (k = k0; k <= k1; k++) { var m0 = Math.pow(10, b[k] / 20) * 4.67; if (m0 > peak) peak = m0; }
+  var floor = peak * 0.01;     /* only spectral peaks within 40 dB of the strongest one count */
+  for (k = k0; k <= k1; k++) {
+    if (!(b[k] > b[k - 1] && b[k] >= b[k + 1])) continue; var mag = Math.pow(10, b[k] / 20) * 4.67; if (mag < floor) continue;
+    var a1 = b[k - 1], c1 = b[k], d1 = b[k + 1], den = a1 - 2 * c1 + d1, p = den < 0 ? 0.5 * (a1 - d1) / den : 0, f = (k + p) * df;
+    var midi = 69 + 12 * Math.log2(f / 440), r = Math.round(midi); if (Math.abs(midi - r) > 0.4) continue; frame[((r % 12) + 12) % 12] += Math.sqrt(mag);
+  }
+  if (peak < 1e-4) return; var tot = 0, i; for (i = 0; i < 12; i++) tot += frame[i]; if (tot <= 0) return;
+  var keep = Math.exp(-dt / 6); for (i = 0; i < 12; i++) KD.chroma[i] = KD.chroma[i] * keep + frame[i] / tot; KD.ev = KD.ev * keep + dt;
+  var res = { tonic: -1, listening: KD.ev < 3 }; if (res.listening) { KD.res = res; return; }
+  var best = -2, second = -2, bt = -1, bm = false, st = -1, sm = false, t, mi, c;
+  for (t = 0; t < 12; t++) for (mi = 0; mi < 2; mi++) { c = keyCorr(mi ? KMIN : KMAJ, t); if (c > best) { second = best; st = bt; sm = bm; best = c; bt = t; bm = mi === 1; } else if (c > second) { second = c; st = t; sm = mi === 1; } }
+  res.score = best; if (best >= 0.55) { res.tonic = bt; res.minor = bm; res.conf = clamp((best - 0.55) / 0.4, 0, 1); if (best - second < 0.08) { res.amb = true; res.alt = st; res.altMinor = sm; } }
+  KD.res = res;
+}
+function keyTick(dt) { KD.acc += dt; if (KD.acc >= 0.1) { var d = KD.acc; KD.acc = 0; keyStep(d); } }
+function keyLabel(t, minor) { return KNAMES[t] + (minor ? " minor" : " major"); }
+function keyCam(t, minor) { return (minor ? CAM_MIN[t] : CAM_MAJ[t]) + (minor ? "A" : "B"); }
+function keyHud(r) {
+  var g = r.g, W = r.W, bw = 236, bh = 62, x = W - bw - 10, y = 40, R = KD.res;   /* under the B sidechain and FROZEN labels */
+  g.fillStyle = "#0a0a0cdd"; g.fillRect(x, y, bw, bh); g.strokeStyle = "#2c2f37"; g.strokeRect(x + .5, y + .5, bw - 1, bh - 1);
+  txt(g, "KEY" + (S.keyHold ? "  HELD" : ""), x + 8, y + 14, C.acc, "left", 10);
+  if (R.tonic >= 0) {
+    txt(g, keyLabel(R.tonic, R.minor), x + 8, y + 36, "#ffffff", "left", 18); txt(g, keyCam(R.tonic, R.minor), x + bw - 8, y + 36, C.m, "right", 18);
+    g.fillStyle = "#1b2523"; g.fillRect(x + 8, y + 44, bw - 16, 5); g.fillStyle = C.l; g.fillRect(x + 8, y + 44, (bw - 16) * R.conf, 5); txt(g, "confidence " + Math.round(R.conf * 100) + " %", x + 8, y + 59, "#d6d8de", "left", 10);
+    if (R.amb) txt(g, "or " + keyLabel(R.alt, R.altMinor), x + bw - 8, y + 59, "#d6d8de", "right", 10);
+  } else {
+    txt(g, R.listening ? "Listening..." : "No clear key", x + 8, y + 36, "#d6d8de", "left", 16);
+    txt(g, "needs a sustained tonal sound", x + 8, y + 56, "#9a9ea8", "left", 10);
+  }
+}
+
 /* ---------- shapes: freeze, compare, match ---------- */
 var NB = 60, edge = function (k) { return 20 * Math.pow(2, k / 6); }, fcB = function (k) { return 20 * Math.pow(2, (k + 0.5) / 6); };
 var REFC = { src: null, tilt: null, on: null, val: null };
@@ -893,6 +946,77 @@ function parseShape(txt) {
   var ok = function (a) { return a.every(function (v) { return typeof v === "number" && isFinite(v) && v > -200 && v < 80; }); }; if (!ok(o.m) || !ok(o.s)) return null;
   return { name: String(o.name || "Imported shape").replace(/[^\w .()+-]/g, "").slice(0, 40) || "Imported shape", m: Float32Array.from(o.m), s: Float32Array.from(o.s), lufs: typeof o.lufs === "number" && isFinite(o.lufs) && o.lufs > -90 && o.lufs < 5 ? o.lufs : undefined };
 }
+
+/* ---------- reference file: analysed here in the browser, never uploaded ---------- */
+var RF = null, RFFT = (function () {
+  var N = 16384, cs = new Float32Array(N / 2), sn = new Float32Array(N / 2), rev = new Uint16Array(N), bits = 14, i, b;
+  for (i = 0; i < N / 2; i++) { cs[i] = Math.cos(2 * Math.PI * i / N); sn[i] = -Math.sin(2 * Math.PI * i / N); }
+  for (i = 0; i < N; i++) { var r = 0; for (b = 0; b < bits; b++) if (i & (1 << b)) r |= 1 << (bits - 1 - b); rev[i] = r; }
+  return function (re, im) {
+    var i, j, t;
+    for (i = 0; i < N; i++) { j = rev[i]; if (j > i) { t = re[i]; re[i] = re[j]; re[j] = t; t = im[i]; im[i] = im[j]; im[j] = t; } }
+    for (var len = 2; len <= N; len <<= 1) { var half = len >> 1, step = N / len;
+      for (i = 0; i < N; i += len) for (var k = 0; k < half; k++) { var wr = cs[k * step], wi = sn[k * step], a = i + k, c = a + half, tr = re[c] * wr - im[c] * wi, ti = re[c] * wi + im[c] * wr; re[c] = re[a] - tr; im[c] = im[a] - ti; re[a] += tr; im[a] += ti; } }
+  };
+})();
+var RWIN = (function () { var w = new Float32Array(16384); for (var i = 0; i < 16384; i++) { var p = 2 * Math.PI * i / 16384; w[i] = 0.42 - 0.5 * Math.cos(p) + 0.08 * Math.cos(2 * p); } return w; })();
+function cleanName(n) { return String(n).replace(/[^\w .()+-]/g, "").trim().slice(0, 40).trim(); }
+function audioInfoOk(rate, ch, len) {
+  if (!(rate >= 8000 && rate <= 384000)) return "The sample rate of that file is not supported.";
+  if (ch < 1 || ch > 64) return "That file has an unsupported number of channels.";
+  if (!(len >= 2 * rate)) return "That file is shorter than 2 seconds. Use a longer piece of music.";
+  if (len > 3600 * rate) return "That file is longer than 60 minutes. Cut out the part you want to compare.";
+  return "";
+}
+function rfUi(on, pct, txtS) { var w = $("#rfWrap"); if (!w) return; w.hidden = !on; $("#refSt").hidden = on; $("#rfBar").style.width = Math.round(pct) + "%"; $("#rfTxt").textContent = txtS || ""; var b = $("#capFile"); b.textContent = on ? "Cancel" : "Load file..."; b.classList.toggle("on", on); }
+function rfCancel() { if (RF) { RF.cancel = true; } }
+function openRefFile() { if (RF) return; if (CAP) { alert2("Finish or cancel the running capture first."); return; } $("#refFileIn").click(); }
+function refFileLoad(f) {
+  var ext = (f.name.split(".").pop() || "").toLowerCase(), okExt = ["wav", "wave", "aif", "aiff", "flac", "mp3", "ogg", "oga", "m4a"];
+  if (okExt.indexOf(ext) < 0 && !/^audio\//.test(f.type)) { alert2("That does not look like an audio file. Use wav, aiff, flac, mp3 or ogg."); return; }
+  if (f.size > 600 * 1024 * 1024) { alert2("That file is bigger than 600 MB. Use a smaller one."); return; }
+  if (!ensureAudio()) { alert2("Audio is not available in this browser."); return; }
+  var job = RF = { cancel: false }; rfUi(true, 0, "Reading " + f.name + "...");
+  var fr = new FileReader();
+  fr.onerror = function () { RF = null; rfUi(false, 0); alert2("That file could not be read."); };
+  fr.onload = function () {
+    if (job.cancel) { RF = null; rfUi(false, 0); return; } rfUi(true, 0, "Decoding...");
+    ctx.decodeAudioData(fr.result, function (buf) {
+      var why = audioInfoOk(buf.sampleRate, buf.numberOfChannels, buf.length); if (why) { RF = null; rfUi(false, 0); alert2(why); return; }
+      refAnalyse(job, buf, cleanName(f.name.replace(/\.[^.]+$/, "")) || "Reference file");
+    }, function () { RF = null; rfUi(false, 0); alert2("That file could not be decoded. It may be damaged or in a format this browser cannot read."); }).catch(function () { });
+  };
+  fr.readAsArrayBuffer(f);
+}
+function refAnalyse(job, buf, name) {
+  var L = buf.getChannelData(0), R = buf.numberOfChannels > 1 ? buf.getChannelData(1) : L, n = L.length, N = 16384, hop = 8192, frames = Math.floor((n - N) / hop) + 1, f = 0, used = 0, pm = new Float64Array(NB), ps = new Float64Array(NB),
+      re = new Float32Array(N), im = new Float32Array(N), dbm = new Float32Array(N / 2), lf = new Lufs(buf.sampleRate), pushed = 0, bandsFn = bandsOf, k, i;
+  function spec(sideSel, off) {
+    for (i = 0; i < N; i++) { var a = L[off + i], b = R[off + i]; re[i] = (sideSel ? 0.5 * (a - b) : 0.5 * (a + b)) * RWIN[i]; im[i] = 0; }
+    RFFT(re, im); for (k = 0; k < N / 2; k++) dbm[k] = 20 * Math.log10(Math.sqrt(re[k] * re[k] + im[k] * im[k]) / N + 1e-10);
+    return bandsFn(dbm, N / 2);
+  }
+  function slice() {
+    if (job.cancel) { RF = null; rfUi(false, 0); return; }
+    var t0 = performance.now();
+    while (f < frames && performance.now() - t0 < 14) {
+      var off = f * hop, bm = spec(false, off), bs = spec(true, off), lvl = -999; for (k = 6; k < 58; k++) lvl = Math.max(lvl, bm[k], bs[k]);
+      if (lvl > -75) { for (k = 0; k < NB; k++) { pm[k] += Math.pow(10, bm[k] / 10); ps[k] += Math.pow(10, bs[k] / 10); } used++; }
+      f++; var upTo = Math.min(n, off + hop); if (upTo > pushed) { lf.push(L, R, pushed, upTo - pushed); pushed = upTo; }
+    }
+    if (f < frames) { rfUi(true, 100 * f / frames, "Analysing " + name + " " + Math.round(100 * f / frames) + " %"); setTimeout(slice, 0); return; }
+    if (pushed < n) lf.push(L, R, pushed, n - pushed);
+    RF = null; rfUi(false, 0);
+    if (used < 10) { alert2("Not enough sound in that file to build a shape. It looks silent or very quiet."); return; }
+    var m = new Float32Array(NB), s2 = new Float32Array(NB); for (k = 0; k < NB; k++) { m[k] = 10 * Math.log10(pm[k] / used + 1e-20); s2[k] = 10 * Math.log10(ps[k] / used + 1e-20); }
+    var lu = lf.integ(); REF = { name: name, m: m, s: s2, lufs: lu > -90 ? lu : undefined, fromFile: true, mono: buf.numberOfChannels === 1, secs: n / buf.sampleRate };
+    if (S.view !== "shapes") setParam("view", "shapes", true); computeEq(); syncLib();
+    if (REF.mono) alert2("That file is mono, so its Side shape is empty. Matching still works on Mid.");
+  }
+  slice();
+}
+$("#refFileIn").addEventListener("change", function (e) { var f = e.target.files && e.target.files[0]; e.target.value = ""; if (f) refFileLoad(f); });
+
 function syncLib() {
   var sel = $("#shapeSel"); if (!sel) return; var cur = sel.value; sel.innerHTML = ""; var list = allShapes();
   var g1 = document.createElement("optgroup"), g2 = document.createElement("optgroup"); g1.label = "Starting points (made by us, not measured from a song)"; g2.label = "My shapes";
@@ -907,17 +1031,29 @@ function syncLib() {
   var g1 = grp("", "1", "Reference", "the sound you want yours to sound like");
   btn(g1, "capRef", "Capture reference", "Capture reference", "Play the song or lead you want to sound like, press this, let it play, then press again. Its average spectrum shape and loudness are frozen as the reference.", function () { startCap("ref"); });
   btn(g1, "canRef", "Cancel", "Cancel capture", "Throw the running capture away and keep what you had before.", cancelCap).hidden = true;
-  var w = document.createElement("label"); w.className = "fld"; w.innerHTML = "<span>Or pick a saved shape</span>"; var sel = document.createElement("select"); sel.id = "shapeSel"; sel.style.maxWidth = "210px"; w.appendChild(sel); g1.appendChild(w); attachTip(w, "Shape library", "Starting-point shapes plus the ones you saved.");
+  btn(g1, "capFile", "Load file...", "Load reference file", "Pick a song or any audio file (wav, aiff, flac, ogg, and mp3 where your system can decode it). It is decoded and analysed on this device only, nothing is uploaded, and its average Mid and Side shape and loudness become the reference. A progress bar shows the work; while it runs this button turns into Cancel.", function () { if (RF) rfCancel(); else openRefFile(); });
+  var w = document.createElement("label"); w.className = "fld"; w.innerHTML = "<span>Or pick a reference preset</span>"; var sel = document.createElement("select"); sel.id = "shapeSel"; sel.style.maxWidth = "210px"; w.appendChild(sel); g1.appendChild(w); attachTip(w, "Reference presets", "Starting-point shapes made by us from formulas (never measured from commercial songs) plus the reference presets you saved.");
   btn(g1, "", "Use as reference", "", "Loads the chosen shape as the target.", function () { var s = allShapes().filter(function (x) { return x.name === sel.value; })[0]; if (s) { REF = s; computeEq(); } });
-  btn(g1, "", "Save as...", "Save reference as", "Keeps the current reference (shape and loudness) in your shape library on this device.", function () {
+  btn(g1, "", "Save as preset...", "Save reference preset", "Keeps the current reference (a captured one or one made from a file; shape and loudness) as a named reference preset on this device.", function () {
     if (!REF) { alert2("There is no reference yet. Capture one or pick a shape first."); return; } var inp = document.createElement("input"); inp.type = "text"; inp.value = REF.name === "Captured reference" ? "My shape" : REF.name; inp.maxLength = 40; inp.style.width = "100%";
     openModal("Save shape", ["<p>Name for this shape:</p>", inp], [{ label: "Cancel" }, { label: "Save", primary: true, fn: function () { var n = inp.value.replace(/[^\w .()+-]/g, "").trim().slice(0, 40); if (!n) return false; var rd = function (a) { return Array.prototype.map.call(a, function (v) { return Math.round(v * 10) / 10; }); }; shapesUser[n] = { m: rd(REF.m), s: rd(REF.s) }; if (typeof REF.lufs === "number") shapesUser[n].lufs = Math.round(REF.lufs * 10) / 10; store("whiskerscope.shapes.v1", shapesUser); REF.name = n; syncLib(); $("#shapeSel").value = n; } }]);
   });
-  btn(g1, "", "Manage...", "Manage shapes", "Delete a saved shape, export the reference as text, or import a shape you were sent.", function () {
-    openModal("Shapes", ["<p>Selected in the library: <b>" + String(sel.value).replace(/</g, "&lt;") + "</b>" + (shapesUser[sel.value] ? "" : " (starting points cannot be deleted)") + "</p>"], [
-      { label: "Delete selected", fn: function () { if (!shapesUser[sel.value]) return false; delete shapesUser[sel.value]; store("whiskerscope.shapes.v1", shapesUser); syncLib(); } },
-      { label: "Export reference", fn: function () { if (!REF) return false; setTimeout(function () { copyText(shapeJson(REF), "The shape"); }, 0); } },
-      { label: "Import", fn: function () { setTimeout(function () { var ta = document.createElement("textarea"); ta.placeholder = "Paste the shape text here"; openModal("Import shape", ["<p>Paste exported shape text. Anything that does not look like a shape is rejected.</p>", ta], [{ label: "Cancel" }, { label: "Import", primary: true, fn: function () { var s = parseShape(ta.value); if (!s) { ta.style.borderColor = "var(--cR)"; return false; } REF = s; computeEq(); } }]); }, 0); } },
+  btn(g1, "", "Manage...", "Manage reference presets", "Rename or delete a saved reference preset, export one as text, or import a preset you were sent.", function () {
+    var nm = String(sel.value), mine = !!shapesUser[nm];
+    openModal("Reference presets", ["<p>Selected: <b>" + nm.replace(/</g, "&lt;") + "</b>" + (mine ? "" : " (starting points cannot be renamed or deleted)") + "</p>"], [
+      { label: "Rename selected", fn: function () { if (!mine) return false; setTimeout(function () {
+        var inp = document.createElement("input"); inp.type = "text"; inp.value = nm; inp.maxLength = 40; inp.style.width = "100%";
+        openModal("Rename preset", ["<p>New name:</p>", inp], [{ label: "Cancel" }, { label: "Rename", primary: true, fn: function () {
+          var n = cleanName(inp.value); if (!n) return false; if (n === nm) return true; if (shapesUser[n] || FACT.some(function (q) { return q[0] === n; })) { inp.style.borderColor = "var(--cR)"; return false; }
+          shapesUser[n] = shapesUser[nm]; delete shapesUser[nm]; store("whiskerscope.shapes.v1", shapesUser); if (REF && REF.name === nm) REF = Object.assign({}, REF, { name: n }); syncLib(); $("#shapeSel").value = n; } }]); }, 0); } },
+      { label: "Delete selected", fn: function () { if (!mine) return false; delete shapesUser[nm]; store("whiskerscope.shapes.v1", shapesUser); syncLib(); } },
+      { label: "Export selected", fn: function () { var x = allShapes().filter(function (q) { return q.name === nm; })[0]; if (!x) return false; setTimeout(function () { copyText(shapeJson(x), "The reference preset"); }, 0); } },
+      { label: "Export reference", fn: function () { if (!REF) return false; setTimeout(function () { copyText(shapeJson(REF), "The reference"); }, 0); } },
+      { label: "Import", fn: function () { setTimeout(function () { var ta = document.createElement("textarea"); ta.placeholder = "Paste the preset text here"; openModal("Import reference preset", ["<p>Paste exported preset text. Anything that does not look like a reference preset is rejected. It is saved to your presets and loaded as the reference.</p>", ta], [{ label: "Cancel" }, { label: "Import", primary: true, fn: function () {
+        var p = parseShape(ta.value); if (!p) { ta.style.borderColor = "var(--cR)"; return false; }
+        var n = p.name, i = 2; while (shapesUser[n] || FACT.some(function (q) { return q[0] === n; })) n = p.name.slice(0, 36) + " " + (i++);
+        var rd = function (a) { return Array.prototype.map.call(a, function (v) { return Math.round(v * 10) / 10; }); }; shapesUser[n] = { m: rd(p.m), s: rd(p.s) }; if (typeof p.lufs === "number") shapesUser[n].lufs = p.lufs;
+        store("whiskerscope.shapes.v1", shapesUser); p.name = n; REF = p; computeEq(); syncLib(); $("#shapeSel").value = n; } }]); }, 0); } },
       { label: "Close" }]);
   });
   mkTog(g1, "shRefOn", "Reference on", "Switches the reference off without losing it: the comparison and the matching EQ stop, the shape stays stored. Turn it back on any time.");
@@ -930,6 +1066,7 @@ function syncLib() {
   });
   mkSel(g1, "shRefTilt", "Ref tilt", [[-6, "-6 dB/oct"], [-3, "-3 dB/oct"], [-1.5, "-1.5"], [0, "0 (as is)"], [1.5, "+1.5"], [3, "+3 dB/oct"], [6, "+6 dB/oct"]], "Edits the reference: tilts its brightness around 1 kHz, for example to make a dark reference a bit brighter. 0 leaves it as it is.");
   stat(g1, "refSt").style.flex = "1 0 100%";
+  var rw = document.createElement("div"); rw.className = "rfw"; rw.id = "rfWrap"; rw.hidden = true; rw.innerHTML = "<div class='pbar'><i id='rfBar'></i></div><span id='rfTxt'></span>"; g1.appendChild(rw);
   /* 2 mine */
   var g2 = grp("", "2", "Mine", "your own sound; skip this and the live sound is used");
   btn(g2, "capMine", "Capture mine", "Capture mine", "Play your own sound, press this, let it play, then press again. Its shape is frozen so you can compare while you move on.", function () { startCap("mine"); });
@@ -953,7 +1090,7 @@ function syncLib() {
 })();
 function updSt() {
   var a = $("#refSt"); if (!a) return;
-  setT("refSt", "Reference: " + (REF ? REF.name + (S.shRefOn ? "" : " [OFF]") + (typeof REF.lufs === "number" ? "  " + REF.lufs.toFixed(1) + " LUFS" : "  (no loudness stored)") : "none yet"));
+  setT("refSt", "Reference: " + (REF ? REF.name + (S.shRefOn ? "" : " [OFF]") + (REF.fromFile ? " (from file)" : "") + (typeof REF.lufs === "number" ? "  " + REF.lufs.toFixed(1) + " LUFS" : "  (no loudness stored)") : "none yet"));
   setT("mineSt", "Mine: " + (MINE ? "captured" + (typeof MINE.lufs === "number" ? "  " + MINE.lufs.toFixed(1) + " LUFS" : "") : live.has ? "live (following the sound)" : "waiting for sound"));
   var note = S.shAuto === "ref" && !(REF && typeof REF.lufs === "number") ? " (no reference loudness, keeping mine)" : autoHeld ? " (held back so it cannot clip)" : ""; setT("autoSt", (S.shAuto === "off" ? "Auto level off" : "Auto gain " + (autoDb >= 0 ? "+" : "") + autoDb.toFixed(1) + " dB") + note);
 }
@@ -1072,9 +1209,9 @@ $("#bAbout").addEventListener("click", function () {
 $("#bHelp").addEventListener("click", function () {
   openModal("Quick guide", [
     "<h3>Scope</h3><ul><li>Shows the waveform. Sync keeps repeating waves still: Trigger, a fixed Hz, the detected pitch, or the host beat.</li><li>Channels: L / R, mono, or Mid / Side.</li></ul>",
-    "<h3>Spectrum</h3><ul><li>Hover for frequency, note and dB. The top-left line names the highest peak.</li><li>Waterfall shows history. Bands groups the curve like an equaliser. Freeze holds the picture.</li></ul>",
+    "<h3>Spectrum</h3><ul><li>Hover for frequency, note and dB. The top-left line names the highest peak.</li><li>Waterfall shows history. Bands groups the curve like an equaliser. Freeze holds the picture.</li><li>Key (top right of the display): the key of what you play, with its Camelot code and a confidence figure. It needs a few seconds of sustained, tonal sound; drums, noise and one lone chord give no clear key or a relative-key pair. Key hold freezes it, Key reset starts over.</li></ul>",
     "<h3>Stereo field</h3><ul><li>Vertical line is mono, sideways is wide. A line leaning left or right means one channel is louder.</li><li>Correlation and Mono loss tell you if it survives being summed to mono.</li></ul>",
-    "<h3>Shapes, in three steps</h3><ul><li><b>1 Reference:</b> play the song or lead you want to sound like, press Capture reference, press again to keep it. Or pick a saved shape.</li><li><b>2 Mine:</b> play your own sound and Capture mine. Skip it and the live sound is used.</li><li><b>3 Match:</b> the bars at the bottom of the graph are the EQ that moves mine toward the reference. EQ on applies it.</li><li>Input and Output set the level in and out. Auto level keeps the loudness the same with the EQ on or off (Keep my loudness), or follows the loudness captured with the reference (Match reference).</li><li>Meters on the right show IN and OUT. Save shapes to your library; Manage exports and imports them as text.</li></ul>",
+    "<h3>Shapes, in three steps</h3><ul><li><b>1 Reference:</b> play the song or lead you want to sound like, press Capture reference, press again to keep it. Or press Load file... to analyse a song from your disk (on this device only), or pick a reference preset.</li><li><b>2 Mine:</b> play your own sound and Capture mine. Skip it and the live sound is used.</li><li><b>3 Match:</b> the bars at the bottom of the graph are the EQ that moves mine toward the reference. EQ on applies it.</li><li>Input and Output set the level in and out. Auto level keeps the loudness the same with the EQ on or off (Keep my loudness), or follows the loudness captured with the reference (Match reference).</li><li>Meters on the right show IN and OUT. Save reference presets with Save as preset...; Manage renames, deletes, exports and imports them as text.</li></ul>",
     "<h3>Meters</h3><ul><li>Blue is normal, purple is a warning, pink is clipping. The pink cap on top stays lit until Peak reset.</li><li>Metering: Peak, RMS (average level), both, or Loudness (LUFS): momentary M, short-term S and integrated I, the way streaming and broadcast meters read it.</li></ul>",
     "<h3>Window</h3><p>Drag any edge or corner to resize. The shape stays the same.</p>",
     "<h3>Sidechain (layer B)</h3><p>Pick a second signal in the preview rig. It is not played; it is drawn in yellow on Spectrum, Scope and Stereo field. On Spectrum, pink bands mark where A and B may mask each other (rule of thumb). In the plugin this is the sidechain input.</p>",
@@ -1095,7 +1232,8 @@ function frame(ts) {
   if (!ctx) { var r0 = prep(cvA); r0.g.fillStyle = "#06080a"; r0.g.fillRect(0, 0, r0.W, r0.H); drawMeters(); return; }
   G.aL.getFloatTimeDomainData(tL); G.aR.getFloatTimeDomainData(tR); if (scActive()) { G.bAL.getFloatTimeDomainData(tSL); G.bAR.getFloatTimeDomainData(tSR); } feedLoudness(); analyseLevels(dt); autoLevel(dt);
   var r = prep(cvA);
-  if (S.view === "scope") drawScope(r); else if (S.view === "spec") drawSpectrum(r); else if (S.view === "stereo") drawStereo(r); else drawShapes(r, dt);
+  if (S.view === "spec" && playing && !S.keyHold) keyTick(dt);
+  if (S.view === "scope") drawScope(r); else if (S.view === "spec") { drawSpectrum(r); keyHud(r); } else if (S.view === "stereo") drawStereo(r); else drawShapes(r, dt);
   drawMeters(); updateReadouts(); if (S.view === "shapes") updSt();
 }
 /* ---------- start ---------- */
@@ -1103,7 +1241,7 @@ buildRo(); applyScheme(S.color); UI.color && UI.color(S.color); showView(); curN
 $$(".fld select, .ctl button").forEach(function (el) { el.addEventListener("change", markName); el.addEventListener("click", function () { setTimeout(markName, 0); }); });
 $$(".knob").forEach(function (el) { el.addEventListener("pointerup", markName); });
 requestAnimationFrame(frame);
-window.__ws = { Lufs: Lufs, get lfIn() { return lfIn; }, get lfPre() { return lfPre; }, Lufs: Lufs, setWinScale: setWinScale, get scale() { return winScale; }, get lf() { return lfOut; }, get autoDb() { return autoDb; }, S: S, get playing() { return playing; }, get CAP() { return CAP; }, get ctxState() { return function () { return ctx && ctx.state; }; }, setParam: setParam, loadPreset: loadPreset, startSrc: startSrc, get EQ() { return EQ; }, startCap: startCap, stopCap: stopCap, get REF() { return REF; }, get gains() { return G.mf ? G.mf.map(function (f) { return +f.gain.value.toFixed(1); }) : null; } };
+window.__ws = { get KD() { return KD; }, keyReset: keyReset, get shapesUser() { return shapesUser; }, get RF() { return RF; }, Lufs: Lufs, get lfIn() { return lfIn; }, get lfPre() { return lfPre; }, Lufs: Lufs, setWinScale: setWinScale, get scale() { return winScale; }, get lf() { return lfOut; }, get autoDb() { return autoDb; }, S: S, get playing() { return playing; }, get CAP() { return CAP; }, get ctxState() { return function () { return ctx && ctx.state; }; }, setParam: setParam, loadPreset: loadPreset, startSrc: startSrc, get EQ() { return EQ; }, startCap: startCap, stopCap: stopCap, get REF() { return REF; }, get gains() { return G.mf ? G.mf.map(function (f) { return +f.gain.value.toFixed(1); }) : null; } };
 /* ---------- panic ---------- */
 function panic() {
   stopSrc(); if (CAP) { CAP = null; updCap(); } if (S.shHear) setParam("shHear", false, true); resetPeaks();

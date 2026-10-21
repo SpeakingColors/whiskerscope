@@ -133,6 +133,26 @@ public:
         draw (dt);
     }
 
+    // Key readout, top right under the labels: key, Camelot code, confidence, and what it needs.
+    void drawKeyHud (juce::Graphics& g, float W, float mr, float mt)
+    {
+        const auto& R = env.p.keyResult(); const bool held = env.p.param ("keyHold") > 0.5f; const float bw = 236, bh = 62, x = W - mr - bw - 2, y = mt + 32;
+        g.setColour (juce::Colour (0xdd0a0a0c)); g.fillRect (x, y, bw, bh); g.setColour (juce::Colour (0xff2c2f37)); g.drawRect (x + 0.5f, y + 0.5f, bw - 1, bh - 1, 1.0f);
+        mtxt (g, juce::String ("KEY") + (held ? "  HELD" : ""), x + 8, y + 14, C().acc, juce::Justification::left, 10);
+        if (R.tonic >= 0)
+        {
+            mtxt (g, juce::String (ws::keyName (R)), x + 8, y + 36, juce::Colours::white, juce::Justification::left, 18); mtxt (g, juce::String (ws::camelotOf (R)), x + bw - 8, y + 36, C().m, juce::Justification::right, 18);
+            g.setColour (col::grid); g.fillRect (x + 8, y + 44, bw - 16, 5.0f); g.setColour (C().l); g.fillRect (x + 8, y + 44, (bw - 16) * R.confidence, 5.0f);
+            mtxt (g, "confidence " + juce::String ((int) std::lround (R.confidence * 100.0f)) + " %", x + 8, y + 59, juce::Colour (0xffd6d8de), juce::Justification::left, 10);
+            if (R.ambiguous) mtxt (g, "or " + juce::String (ws::keyName ([&] { ws::KeyResult a; a.tonic = R.altTonic; a.minor = R.altMinor; return a; }())), x + bw - 8, y + 59, juce::Colour (0xffd6d8de), juce::Justification::right, 10);
+        }
+        else
+        {
+            mtxt (g, R.listening ? "Listening..." : "No clear key", x + 8, y + 36, juce::Colour (0xffd6d8de), juce::Justification::left, 16);
+            mtxt (g, "needs a sustained tonal sound", x + 8, y + 56, juce::Colour (0xff9a9ea8), juce::Justification::left, 10);
+        }
+    }
+
     void paint (juce::Graphics& g) override
     {
         g.fillAll (col::disp); const auto& P = env.p;
@@ -209,6 +229,7 @@ public:
         }
         if (scOn) mtxt (g, "B sidechain", W - mr - 4, mt + (P.param ("fzSpec") > 0.5f ? 26 : 12), col::cb, juce::Justification::right, 11);
         if (P.param ("fzSpec") > 0.5f) mtxt (g, "[FROZEN]", W - mr - 4, mt + 12, C().r, juce::Justification::right, 11);
+        drawKeyHud (g, W, mr, mt);
         if (mx >= ml && mx <= ml + (float) pw && my >= mt && my <= mt + ph)
         {
             const int xi = juce::jlimit (0, pw - 1, (int) std::floor (mx - ml)); const double hf2 = fOfX ((float) xi + 0.5f, (float) pw, lin); const float hv = vA[(size_t) xi];

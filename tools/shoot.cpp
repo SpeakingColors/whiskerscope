@@ -78,7 +78,7 @@ int main (int argc, char** argv)
     {
         if (pg == 3) { proc.setParam ("shHear", 1.0f); proc.setParam ("shAuto", 1.0f); }
         proc.page = pg; proc.setShapesWatched (pg == 3);
-        for (int i = 0; i < 30; ++i) { feed (0.1); proc.runShapesTickNow (0.05); editor->tickForScreenshot(); juce::MessageManager::getInstance()->runDispatchLoopUntil (5); }
+        for (int i = 0; i < 30; ++i) { feed (0.1); proc.runShapesTickNow (0.1); editor->tickForScreenshot(); juce::MessageManager::getInstance()->runDispatchLoopUntil (5); }
         const auto img = editor->createComponentSnapshot (editor->getLocalBounds(), true, 1.0f);
         juce::File f = out.getChildFile (juce::String ("real_") + names[pg] + ".png"); f.deleteFile(); juce::FileOutputStream fo (f); juce::PNGImageFormat png; png.writeImageToStream (img, fo);
         { juce::Array<juce::var> items; collect (editor, editor, items); out.getChildFile (juce::String ("real_") + names[pg] + ".json").replaceWithText (juce::JSON::toString (juce::var (items))); }

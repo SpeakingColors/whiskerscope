@@ -20,6 +20,10 @@ The waveform of the sound. Channels picks L / R, left, right, mono or mid / side
 
 Which frequencies are in the sound. FFT size trades sharpness (bigger, good for bass) against speed (smaller). Speed sets how fast the picture falls. Range sets how many dB are shown. Smoothing averages neighbouring frequencies. Slope tilts the picture by dB per octave around 1 kHz (3 dB makes pink noise look flat). Linear switches to a linear frequency scale, Fill colours under the line, Peak hold keeps the highest value of every frequency until Peak reset. The highest peak is labelled with its level, frequency and note.
 
+## Key readout
+
+The box in the top right corner of the Spectrum guesses the key of what you play: the key name, the Camelot code (8A is A minor, 8B is C major) and a confidence value. It listens to about 6 seconds of the sound between 100 Hz and 2 kHz and compares the notes it hears with typical major and minor profiles (Krumhansl-Kessler). It needs a sustained tonal sound: chords, pads, a melody over some bars. It shows "Listening" at first and "No clear key" for noise, drums only or sweeps. A single chord is ambiguous with its relative key (C major and A minor share the same notes), so the box then shows "or" and the second guess; it is a hint, not a verdict. Key hold freezes the readout so it stays while you play something else. Key reset forgets what it heard and starts again.
+
 # Stereo field
 
 The goniometer shows where the sound sits between left and right. Straight up is mono, sideways is wide, a diagonal means one side only. The correlation meter goes from -1 (antiphase, cancels in mono) through 0 (stereo) to +1 (mono). Width is the share of side energy. Mono loss is how much quieter the sound gets when left and right are added. The verdict (Mono safe, Check mono, Phase problem) follows simple rules of thumb: it is a hint, not a standard.
@@ -32,8 +36,9 @@ Shapes compares the average spectrum of a reference (a song, a lead you love) wi
 - The bars at the bottom are the EQ that moves your sound toward the reference (pink cuts, teal boosts). Both shapes are first levelled to their own average, so loudness does not matter, only the balance of frequencies.
 - Strength scales the curve. Max move limits the largest boost or cut.
 - EQ on turns the matching Mid/Side EQ on in the audio path, so you can hear it. It is 30 bells per channel and every control is automatable. Auto level keeps your loudness or matches the loudness stored with the reference. Input and Output set the level around the EQ. A safety limiter sits at the very end.
-- Save shape, Load shape, Copy shape text and Paste shape text keep and share shapes. Bad text is refused.
-- The three starting points are made by us and are not measured from any song.
+- Load file analyses an audio file on your computer and uses its average Mid and Side shape as the reference, with a progress bar and a Cancel button. It runs only on your computer and nothing is uploaded. WAV, AIFF, FLAC and OGG always work; MP3 and others only where your system can decode them (macOS and Windows usually can, Linux builds do not read MP3). Files shorter than 2 seconds or longer than 60 minutes are refused, and silent parts are skipped.
+- Save as preset keeps the current reference (captured or from a file) under a name in your library, in the Studio 87 / Whisker Scope folder on this computer. The drop-down "Or pick a reference preset" lists the starting points and your own. Manage renames, deletes, exports (as text) and imports presets. Bad text is refused.
+- The starting points are made by formula and are not measured from any song.
 - Copy EQ points copies the bells (frequency, gain, Q) for Mid and Side, to type into any other EQ.
 
 # Sidechain layer (masking)

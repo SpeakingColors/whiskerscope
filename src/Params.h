@@ -69,6 +69,7 @@ inline const std::vector<FlagDef>& flags()
         { "hold", "Peak hold", "Peak hold", "Keeps a thin line at the loudest value each frequency reached.", true },
         { "fzSpec", "Freeze spectrum", "Freeze", "Holds the spectrum picture. Shortcut: F.", false },
         { "fzSt", "Freeze stereo", "Freeze", "Holds the picture. Shortcut: F.", false },
+        { "keyHold", "Key hold", "Key hold", "Freezes the key readout in the top right corner of the display, so it stays while you play something else.", false },
         { "shHear", "EQ on", "EQ on", "Turns the matching EQ on or off so you can A/B. With Auto level on, the loudness stays the same, so you hear only the tone change. The EQ is 30 bells for Mid and 30 for Side, a third of an octave apart.", false },
         { "shRefOn", "Reference on", "Reference on", "Switches the reference off without losing it: the comparison and the matching EQ stop, the shape stays stored. Turn it back on any time.", true },
     };

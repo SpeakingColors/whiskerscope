@@ -71,7 +71,7 @@ public:
     // Shapes (message thread only; the editor and the timer both run there)
     struct ShapeView
     {
-        bool hasRef = false, hasMine = false, hasLive = false, hasRes = false, capturing = false, captureIsRef = false, hasRefShown = false;
+        bool hasRef = false, hasMine = false, hasLive = false, hasRes = false, capturing = false, captureIsRef = false, hasRefShown = false, refFromFile = false;
         ws::Shape ref, mine;
         float refShown[2][ws::kBands] {};                            // reference as compared (tilt applied); valid when hasRefShown
         float live[2][ws::kBands] {}, res[2][ws::kBands] {}, eq[2][ws::kBands] {};   // [0] Mid, [1] Side
@@ -89,11 +89,27 @@ public:
     void shapeParamsChanged() { matchDirty = true; }
     juce::String takeNote() { auto n = lastNote; lastNote.clear(); return n; }
 
-    // shape library (starting points made by us plus the user's files) and text exchange
+    // Reference file: the average Mid/Side shape and the loudness of an audio file, analysed on a background thread, offline, never
+    // uploaded. The result becomes the reference. Errors come back through takeNote().
+    struct FileStatus { bool running = false; float progress = 0.0f; juce::String name; };
+    bool startReferenceFile (const juce::File& f);                  // false while a capture or another file analysis is running
+    void cancelReferenceFile();
+    FileStatus fileStatus() const;
+    static juce::String fileWildcard();                              // every format this build can decode, for the file chooser
+
+    // Key detector on the Spectrum page (message thread). It listens to the input (Mid) while the Spectrum page is open and Key hold is off.
+    const ws::KeyResult& keyResult() const { return keyRes; }
+    void resetKey();
+    void setKeyWatched (bool on) { keyWatched = on; }
+
+    // shape library = reference presets (starting points made by us plus the user's files) and text exchange
     std::vector<ws::Shape> factoryShapes() const;
     std::vector<ws::Shape> userShapes() const;
     bool saveUserShape (const ws::Shape& s);
     bool deleteUserShape (const juce::String& name);
+    bool renameUserShape (const juce::String& from, const juce::String& to, juce::String& whyNot);
+    bool importShapeText (const juce::String& text, ws::Shape& saved, juce::String& whyNot);   // validated; saved under a free name
+    bool isFactoryShapeName (const juce::String& name) const;
     static juce::String shapeToText (const ws::Shape& s);
     static bool shapeFromText (const juce::String& text, ws::Shape& out);
     static juce::String cleanName (const juce::String& n);          // letters, digits, space . ( ) + - only, 40 characters at most
@@ -120,11 +136,13 @@ public:
     static void saveSettings (const Settings&);
 
     // for the offline tests and the screenshot tool: run the slow work once, now
-    void runShapesTickNow (double dtSeconds) { shapesTick (dtSeconds); }
+    void runShapesTickNow (double dtSeconds) { shapesTick (dtSeconds); keyTick (dtSeconds); fileTick(); }
 
 private:
     void timerCallback() override;
     void shapesTick (double dt);
+    void keyTick (double dt);
+    void fileTick();
     void recomputeMatch();
     void refreshRefShown();
     juce::File shapesDir() const { return dataDir().getChildFile ("shapes"); }
@@ -144,6 +162,8 @@ private:
     ShapeView view; ws::Spectrum spM, spS, spRM, spRS; double analysedRate = 0;
     std::vector<float> bufA, bufB, bufM, bufS;
     double capAccM[ws::kBands] {}, capAccS[ws::kBands] {}, capLufsE = 0; int capFrames = 0, capLufsN = 0; double capStart = 0, capLimit = 0; bool capToRef = false, capturing = false;
+    struct RefJob; std::unique_ptr<RefJob> refJob;
+    ws::KeyDetector keyDet; ws::KeyResult keyRes; std::vector<float> keyBufA, keyBufB; double keyClock = 0; uint64_t keyLastWritten = 0; bool keyWatched = false;
     bool shapesWatched = false; double matchClock = 0, lastTickSeconds = 0; float matchKey[6] { -1, -1, -1, -1, -1, -1 }; bool matchDirty = true;
     juce::String lastNote;
 
