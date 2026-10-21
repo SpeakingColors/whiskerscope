@@ -4,7 +4,7 @@
 #include "catui/RenderGate.h"
 
 #ifndef WS_VERSION
- #define WS_VERSION "0.3.0"
+ #define WS_VERSION "0.3.1"
 #endif
 
 using APVTS = juce::AudioProcessorValueTreeState;
@@ -337,7 +337,7 @@ void Content::buildShapes()
     bCapRef = mkButton ("Capture reference", 188, "Capture reference", "Play the song or lead you want to sound like, press this, let it play, then press again. Its average spectrum shape and loudness are frozen as the reference.", [this] { if (p.shapes().capturing) { p.stopCapture(); note (p.takeNote()); } else p.startCapture (true); }); g1->add (bCapRef);
     bCanRef = mkButton ("Cancel", 70, "Cancel capture", "Throw the running capture away and keep what you had before.", [this] { p.cancelCapture(); }); g1->add (bCanRef); bCanRef->setVisible (false);
     bLoadFile = mkButton ("Load file...", 124, "Load reference file", "Analyses an audio file on this computer and uses its average Mid and Side shape as the reference. Works offline, nothing is uploaded. " + WhiskerScopeProcessor::fileWildcard().replace ("*.", ".").replace (";", " ") + " files can be read on this system.", [this] { loadFileDialog(); }); g1->add (bLoadFile);
-    { juce::StringArray none; fShape = keep (new Field ("Or pick a reference preset", none)); fShape->setSize (185, Field::kHeight); fShape->setTip ("Reference presets\nStarting-point shapes made by formula (never measured from a song) plus the ones you saved."); g1->add (fShape); }
+    { juce::StringArray none; fShape = keep (new Field ("Or pick a reference preset", none)); fShape->setSize (185, Field::kHeight); fShape->setTip ("Reference presets\nStarting-point shapes made by formula (never measured from a song) plus the ones you saved. Names ending (study) follow a published study of chart records; (rule of thumb) and (rough guess) are our own constructions from producer advice, not measurements."); g1->add (fShape); }
     g1->add (mkButton ("Use as reference", 172, "Use as reference", "Loads the chosen shape as the target.", [this] { const int id = fShape->box.getSelectedId() - 1000; if (id >= 0 && id < (int) shapeList.size()) p.useAsReference (shapeList[(size_t) id]); }));
     g1->add (mkButton ("Save as preset...", 140, "Save reference as preset", "Keeps the current reference (shape and loudness), captured or loaded from a file, as a named preset in your library on this device.", [this]
     {

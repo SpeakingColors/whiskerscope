@@ -8,4 +8,5 @@
 6. Version comes from the release tag (for example v0.2.0), is built into the plugin and shown on the About page, so tag, installer and plugin always match
 7. Sidechain layer (masking view) and the real match EQ stage (done in v0.2.0)
 8. Key/scale detector on the Spectrum; reference audio files and a reference preset library on Shapes (done in v0.3.0)
-9. Tests by hand in real DAWs and on macOS (not possible from the build sandbox)
+9. Genre reference presets with sources and confidence labels (done in v0.3.1; docs/genre-curves.md)
+10. Tests by hand in real DAWs and on macOS (not possible from the build sandbox)

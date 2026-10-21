@@ -406,11 +406,29 @@ bool WhiskerScopeProcessor::shapeFromText (const juce::String& text, ws::Shape& 
 
 std::vector<ws::Shape> WhiskerScopeProcessor::factoryShapes() const
 {
-    struct Bump { double f, w, g; }; struct Q { const char* name; double tilt; std::vector<Bump> b; };
+    struct Bump { double f, w, g; }; struct Q { const char* name; double tilt; std::vector<Bump> b; double hp, topHz, topSlope; };
     static const std::vector<Q> list = {
-        { "Gentle tilt (-3 dB/oct)", -3, {} }, { "Bright lead", -2, { { 3000, 1.2, 5 }, { 9000, 1, 4 }, { 60, 1, -6 } } }, { "Dark warm pad", -5, { { 250, 1, 3 }, { 8000, 1, -6 } } },
-        { "Kick and bass focus", -4.5, { { 55, 0.7, 8 }, { 110, 0.8, 3 }, { 2500, 1.2, -4 } } }, { "Trance supersaw", -3.5, { { 1200, 1.2, 3 }, { 5000, 1.3, 3 }, { 40, 1, -8 } } },
-        { "Vocal presence", -4, { { 200, 1, 2 }, { 3000, 1, 4 }, { 100, 0.8, -6 } } } };
+        // GENRE-CURVES-BEGIN
+        { "Gentle tilt (-3 dB/oct)", -3, {  }, 0, 0, 0 },
+        { "Bright lead", -2, { { 3000, 1.2, 5 }, { 9000, 1, 4 }, { 60, 1, -6 } }, 0, 0, 0 },
+        { "Dark warm pad", -5, { { 250, 1, 3 }, { 8000, 1, -6 } }, 0, 0, 0 },
+        { "Kick and bass focus", -4.5, { { 55, 0.7, 8 }, { 110, 0.8, 3 }, { 2500, 1.2, -4 } }, 0, 0, 0 },
+        { "Trance supersaw", -3.5, { { 1200, 1.2, 3 }, { 5000, 1.3, 3 }, { 40, 1, -8 } }, 0, 0, 0 },
+        { "Vocal presence", -4, { { 200, 1, 2 }, { 3000, 1, 4 }, { 100, 0.8, -6 } }, 0, 0, 0 },
+        { "Master slope (-4.5 dB/oct)", -4.5, {  }, 0, 0, 0 },
+        { "Chart pop average (study)", -5, { { 85, 0.7, 1.5 } }, 45, 4000, -2 },
+        { "Chart electronic (study)", -4.5, { { 55, 0.8, 3 } }, 30, 5000, -1.5 },
+        { "Chart hip hop (study)", -4.9, { { 50, 0.7, 5 } }, 28, 0, 0 },
+        { "House club (rule of thumb)", -4.5, { { 80, 0.8, 3 }, { 220, 1, -1.5 } }, 28, 0, 0 },
+        { "Techno club (rule of thumb)", -4.5, { { 55, 0.7, 3 }, { 220, 1, -1.5 } }, 28, 0, 0 },
+        { "Hard techno (rule of thumb)", -4, { { 50, 0.6, 4 }, { 300, 1, -2.5 } }, 28, 0, 0 },
+        { "Trance club (rule of thumb)", -4, { { 55, 0.7, 3 }, { 1200, 1.5, 1 }, { 5000, 1.3, 1.5 } }, 30, 0, 0 },
+        { "DnB (rule of thumb)", -4.5, { { 50, 0.8, 4 }, { 70, 0.4, 2 }, { 350, 1, -1 } }, 25, 0, 0 },
+        { "Dubstep (rule of thumb)", -4.5, { { 40, 0.7, 5 }, { 350, 1.3, 2 } }, 22, 0, 0 },
+        { "Hardstyle (rule of thumb)", -4, { { 50, 0.55, 6 }, { 500, 0.8, 1.5 }, { 3000, 1.2, 3 } }, 30, 8000, -3 },
+        { "UK hardcore (rough guess)", -3.5, { { 70, 0.8, 3 }, { 100, 0.5, 2 }, { 2500, 1.5, 2.5 } }, 35, 0, 0 }
+// GENRE-CURVES-END
+    };
     std::vector<ws::Shape> out;
     for (auto& q : list)
     {
@@ -419,6 +437,8 @@ std::vector<ws::Shape> WhiskerScopeProcessor::factoryShapes() const
         {
             const double f = ws::bandCentreHz (k); double v = q.tilt * std::log2 (f / 1000.0);
             for (auto& b : q.b) { const double d = std::log2 (f / b.f) / b.w; v += b.g * std::exp (-d * d); }
+            if (q.hp > 0) v -= 12.0 * std::max (0.0, std::log2 (q.hp / f));
+            if (q.topHz > 0) v += q.topSlope * std::max (0.0, std::log2 (f / q.topHz));
             s.m[(size_t) k] = (float) v; s.s[(size_t) k] = (float) (v - (f < 150 ? 18 : f < 500 ? 8 : 3));
         }
         out.push_back (s);
