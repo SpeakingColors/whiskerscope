@@ -657,7 +657,7 @@ void Content::showAbout()
     modal.head ("Installing and removing"); modal.bullets ({ "Windows: one .exe installer. macOS: one .pkg plus an Uninstall app. Linux: Flatpak or a plain .vst3 folder.", "The uninstaller removes everything it installed and keeps your presets and shapes, unless you tick the box to delete them too.", "Presets live in the Studio 87 / Whisker Scope folder of your user data." });
     modal.head ("Fonts"); modal.para ("Barlow Condensed (Jeremy Tribby) and JetBrains Mono (JetBrains), both under the SIL Open Font License 1.1.");
     modal.head ("Support the project"); modal.para ("If it helps your music, a coffee keeps it free for everyone.");
-    static const juce::String kofi;     // the Ko-fi page name goes here once the page exists (same as the mockup)
+    static const juce::String kofi { "studio87" };     // same page name as the mockup
     if (kofi.isEmpty()) modal.para ("The Ko-fi page is not set up yet. This button goes live when it is.");
     modal.show ({ { "Support on Ko-fi", false, [] { if (kofi.isNotEmpty()) juce::URL ("https://ko-fi.com/" + kofi).launchInDefaultBrowser(); return false; } }, { "Close" } });
 }

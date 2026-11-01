@@ -1213,7 +1213,7 @@ $("#bSet").addEventListener("click", function () {
   var p = document.createElement("p"); p.textContent = "Settings and presets are kept in this browser only. Nothing is sent anywhere."; w.appendChild(p);
   openModal("Settings", [w]);
 });
-var SUPPORT = { kofi: "" /* Ko-fi page name goes here once it exists */, github: "" };
+var SUPPORT = { kofi: "studio87", github: "" };
 $("#bAbout").addEventListener("click", function () {
   var links = document.createElement("div"); links.className = "row"; links.style.justifyContent = "flex-start";
   var a = document.createElement("a"); a.className = "btn"; a.textContent = "Support on Ko-fi"; if (SUPPORT.kofi) { a.href = "https://ko-fi.com/" + SUPPORT.kofi; a.target = "_blank"; a.rel = "noopener noreferrer"; } else a.setAttribute("aria-disabled", "true"); links.appendChild(a);
