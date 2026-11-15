@@ -1,5 +1,7 @@
 # Whisker Scope 🐈
 
+<p align="center"><a href="https://ko-fi.com/studio87"><img src="https://raw.githubusercontent.com/SpeakingColors/.github/main/assets/kofi-banner.svg" alt="Support Studio 87 on Ko-fi" width="440"></a></p>
+
 A scope, spectrum and frequency analyzer that had too much catnip at lunch.
 
 Free and open source analyser plugin (VST3 and Standalone) from Studio 87. v0.3.1 adds genre reference presets (chart-study based and rule-of-thumb ones, clearly labelled; see docs/genre-curves.md). v0.3.0 adds a key detector on the Spectrum and reference files with reference presets on Shapes. v0.2.0 has the real editor built from the approved mockup. It has been built and checked by CI (pluginval) but has not been tested by hand in a DAW or on macOS yet.
