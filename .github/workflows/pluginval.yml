@@ -23,7 +23,8 @@ jobs:
       - name: Run pluginval
         shell: bash
         run: |
-          curl -fsSL -o pv.zip https://github.com/Tracktion/pluginval/releases/latest/download/pluginval_Linux.zip
+          curl -fsSL -o pv.zip https://github.com/Tracktion/pluginval/releases/download/v1.0.4/pluginval_Linux.zip
+          echo "c01c49d8063965c4c2dea8324468336768f5c9139e0b1caebde14c2400b55352  pv.zip" | sha256sum -c -
           unzip -q pv.zip; chmod +x pluginval
           v=$(find build -type d -name "*.vst3" | head -1); echo "Testing $v"
           set +e
