@@ -662,6 +662,7 @@ void Content::showAbout()
     if (kofi.isEmpty()) modal.para ("The Ko-fi page is not set up yet. This button goes live when it is.");
     modal.show ({ { "Support on Ko-fi", false, [] { if (kofi.isNotEmpty()) juce::URL ("https://ko-fi.com/" + kofi).launchInDefaultBrowser(); return false; } },
                   { studio87link::buttonText(), false, [] { studio87link::openUpdater ("whiskerscope"); return false; }, juce::String (studio87link::buttonText()) + "\n" + studio87link::tipText() },
+                  { studio87link::githubButtonText(), false, [] { studio87link::openGitHub ("whiskerscope"); return false; }, juce::String (studio87link::githubButtonText()) + "\n" + studio87link::githubTipText() },
                   { "Close" } });
 }
 
