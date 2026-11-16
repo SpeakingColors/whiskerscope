@@ -1,4 +1,5 @@
 #include "PluginEditor.h"
+#include "Studio87Link.h"
 #include "Views.h"
 #include "Controls.h"
 #include "catui/RenderGate.h"
@@ -659,7 +660,9 @@ void Content::showAbout()
     modal.head ("Support the project"); modal.para ("If it helps your music, a coffee keeps it free for everyone.");
     static const juce::String kofi { "studio87" };     // same page name as the mockup
     if (kofi.isEmpty()) modal.para ("The Ko-fi page is not set up yet. This button goes live when it is.");
-    modal.show ({ { "Support on Ko-fi", false, [] { if (kofi.isNotEmpty()) juce::URL ("https://ko-fi.com/" + kofi).launchInDefaultBrowser(); return false; } }, { "Close" } });
+    modal.show ({ { "Support on Ko-fi", false, [] { if (kofi.isNotEmpty()) juce::URL ("https://ko-fi.com/" + kofi).launchInDefaultBrowser(); return false; } },
+                  { studio87link::buttonText(), false, [] { studio87link::openUpdater ("whiskerscope"); return false; }, juce::String (studio87link::buttonText()) + "\n" + studio87link::tipText() },
+                  { "Close" } });
 }
 
 void Content::showGuide()

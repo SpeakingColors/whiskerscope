@@ -8,6 +8,8 @@ enable_testing()
 add_executable(ws_engine_test tests/engine_test.cpp)
 target_include_directories(ws_engine_test PRIVATE include)
 add_test(NAME engine COMMAND ws_engine_test)
+add_executable(ws_link_test tests/test_updater_link.cpp)
+add_test(NAME updater_link COMMAND ws_link_test)
 
 # Plugin. Pass -DWS_JUCE_DIR=/path/to/JUCE to use a local JUCE, otherwise JUCE is fetched.
 option(WS_BUILD_PLUGIN "Build the VST3 plugin and standalone app" ON)

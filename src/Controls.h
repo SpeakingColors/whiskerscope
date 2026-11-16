@@ -111,7 +111,7 @@ private:
 class Modal : public juce::Component
 {
 public:
-    struct Btn { juce::String label; bool primary = false; std::function<bool()> fn; };
+    struct Btn { juce::String label; bool primary = false; std::function<bool()> fn; juce::String tip; };
     explicit Modal (const Palette& p) : pal (p) { setVisible (false); setWantsKeyboardFocus (true); addChildComponent (view); view.setScrollBarsShown (true, false); view.setViewedComponent (&body, false); view.setScrollBarThickness (8); }
 
     // body building (call between begin() and show())
@@ -129,7 +129,7 @@ public:
     void show (std::vector<Btn> buttons)
     {
         btns.clear(); buttonRow.clear();
-        for (auto& b : buttons) { auto* mb = new MBtn (b.label, MBtn::Plain, pal); mb->setLit (b.primary); mb->setSize (MBtn::widthFor (b.label, MBtn::Plain), 30); auto fn = b.fn; mb->onClick = [this, fn] { if (! fn || fn()) close(); }; buttonRow.add (mb); addChildComponent (mb); btns.push_back (std::move (b)); }
+        for (auto& b : buttons) { auto* mb = new MBtn (b.label, MBtn::Plain, pal); mb->setLit (b.primary); if (b.tip.isNotEmpty()) mb->setTooltip (b.tip); mb->setSize (MBtn::widthFor (b.label, MBtn::Plain), 30); auto fn = b.fn; mb->onClick = [this, fn] { if (! fn || fn()) close(); }; buttonRow.add (mb); addChildComponent (mb); btns.push_back (std::move (b)); }
         layoutCard(); setVisible (true); toFront (true); for (auto* b : buttonRow) b->setVisible (true); view.setVisible (true);
         bool focused = false; for (auto* c : owned) if (auto* te = dynamic_cast<juce::TextEditor*> (c)) { te->grabKeyboardFocus(); if (! te->isMultiLine()) te->selectAll(); focused = true; break; }
         if (! focused) grabKeyboardFocus();
